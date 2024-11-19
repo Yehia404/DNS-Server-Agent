@@ -13,23 +13,25 @@ def handle_client(client_data, client_address, server_socket):
         # Decode the domain query
         data = client_data.decode()
         if not data:
+            print("[AUTHORITATIVE] Received empty query.")
             return
 
-        print(f"[AUTHORITATIVE] Received query for: {data} from {client_address}")
+        print(f"[AUTHORITATIVE] Received query: '{data}' from {client_address}")
 
-        # Resolve domain name
+        # Resolve domain
         response = authoritative_dns_table.get(data, "Domain not found")
+        print(f"[AUTHORITATIVE] Responding with: {response}")
 
-        # Send response back to the client
+        # Send response back to client
         server_socket.sendto(response.encode(), client_address)
 
     except Exception as e:
-        print(f"[ERROR] {e}")
+        print(f"[AUTHORITATIVE ERROR] {e}")
 
 # Start the authoritative DNS server
 def start_server():
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    server_socket.bind((HOST, AUTHORITATIVE_PORT))  # Bind to authoritative server port
+    server_socket.bind((HOST, AUTHORITATIVE_PORT))
     print(f"[AUTHORITATIVE SERVER] Running on {HOST}:{AUTHORITATIVE_PORT}")
 
     while True:

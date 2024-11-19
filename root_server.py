@@ -4,7 +4,7 @@ from config import HOST, ROOT_PORT
 # Root DNS Table (mapping TLD to server)
 root_dns_table = {
     ".com": ("127.0.0.1", 1500),  # TLD server for .com
-    ".org": ("127.0.0.1", 1600),  # TLD server for .org
+    # ".org": ("127.0.0.1", 1600),  # TLD server for .org
 }
 
 def handle_client(client_data, client_address, server_socket):
@@ -12,9 +12,10 @@ def handle_client(client_data, client_address, server_socket):
         # Decode the domain query
         data = client_data.decode()
         if not data:
+            print("[ROOT] Received empty query.")
             return
 
-        print(f"[ROOT] Received query for: {data} from {client_address}")
+        print(f"[ROOT] Received query: '{data}' from {client_address}")
 
         # Extract TLD
         domain_parts = data.split(".")
@@ -22,22 +23,23 @@ def handle_client(client_data, client_address, server_socket):
 
         # Check if TLD is valid
         if tld in root_dns_table:
-            # Send TLD server information
             tld_server, tld_port = root_dns_table[tld]
             response = f"Redirect to TLD server: {tld_server}:{tld_port}"
+            print(f"[ROOT] Redirecting to TLD server {tld_server}:{tld_port}")
         else:
             response = "TLD not found"
+            print("[ROOT] TLD not found for query.")
 
-        # Send response back to the client
+        # Send response to the client
         server_socket.sendto(response.encode(), client_address)
 
     except Exception as e:
-        print(f"[ERROR] {e}")
+        print(f"[ROOT ERROR] {e}")
 
 # Start the root DNS server
 def start_server():
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    server_socket.bind((HOST, ROOT_PORT))  # Bind to root DNS server port
+    server_socket.bind((HOST, ROOT_PORT))
     print(f"[ROOT SERVER] Running on {HOST}:{ROOT_PORT}")
 
     while True:
