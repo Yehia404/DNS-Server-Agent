@@ -28,8 +28,8 @@ def handle_client(client_data, client_address, server_socket, auth_table, domain
             domain_data = auth_table[domain].get(data, None)
             if domain_data:
                 # Format response with server information
-                response = f"Redirecting to authoritative server: {domain_data}"
-                print(f"[AUTH] Redirecting to authoritative server {domain_data}")
+                response = f"Domain IP: {domain_data}"
+                print(f"[AUTH] Domain IP {domain_data}")
             else:
                 response = "Domain not found in authoritative server table."
                 print("[AUTH] Domain not found in the authoritative server table.")
