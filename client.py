@@ -1,7 +1,7 @@
 import socket
-
+from config import HOST, ROOT_PORT
 # Server details
-ROOT_SERVER = ("127.0.0.1", 1400)  # Root server's IP and port
+ROOT_SERVER = (HOST, ROOT_PORT)  # Root server's IP and port
 
 
 # Function to send a query to the root server

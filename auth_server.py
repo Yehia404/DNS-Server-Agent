@@ -1,6 +1,7 @@
 import socket
 import json
 import sys
+from config import HOST
 
 # Function to load the authoritative server table from the provided JSON file
 def load_auth_table(auth_table_file):
@@ -62,7 +63,7 @@ def start_server(auth_table_file, domain):
 
     port = port_map[domain]
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    server_socket.bind(("127.0.0.1", port))
+    server_socket.bind((HOST, port))
     print(f"[AUTH SERVER] Running on port {port} for domain '{domain}'")
 
     while True:

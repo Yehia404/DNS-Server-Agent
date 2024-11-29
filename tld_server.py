@@ -1,6 +1,7 @@
 import socket
 import json
 import sys
+from config import HOST
 
 # Function to load the TLD table from the provided JSON file
 def load_tld_table(tld_table_file):
@@ -60,7 +61,7 @@ def start_server(tld_table_file, tld):
 
     port = tld_ports[tld]
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    server_socket.bind(("127.0.0.1", port))
+    server_socket.bind((HOST, port))
     print(f"[TLD SERVER] Running on port {port} for TLD '{tld}'")
 
     while True:
