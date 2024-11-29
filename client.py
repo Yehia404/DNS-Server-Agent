@@ -2,8 +2,7 @@ import socket
 
 # Server details
 ROOT_SERVER = ("127.0.0.1", 1400)  # Root server's IP and port
-TLD_SERVER = ("127.0.0.1", 1500)  # Example TLD server's IP and port
-AUTH_SERVER = ("127.0.0.1", 1600)  # Example Authoritative server's IP and port
+
 
 # Function to send a query to the root server
 def query_root_server(domain):
