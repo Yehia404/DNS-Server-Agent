@@ -1,58 +1,91 @@
 import socket
-from config import HOST, ROOT_PORT
 
-def query_dns():
-    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as client_socket:
-        client_socket.connect((HOST, ROOT_PORT))
+# Server details
+ROOT_SERVER = ("127.0.0.1", 1400)  # Root server's IP and port
+TLD_SERVER = ("127.0.0.1", 1500)  # Example TLD server's IP and port
+AUTH_SERVER = ("127.0.0.1", 1600)  # Example Authoritative server's IP and port
 
-        while True:
-            # Input domain name to resolve
-            domain_name = input("Enter domain name to resolve (or 'exit' to quit): ")
-            if domain_name.lower() == 'exit':
-                print("[DISCONNECTED] Client closed the connection.")
-                break
+# Function to send a query to the root server
+def query_root_server(domain):
+    try:
+        # Create socket for UDP
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.sendto(domain.encode(), ROOT_SERVER)
+            response, _ = s.recvfrom(1024)
+            print(f"Root Server Response: {response.decode()}")
+            return response.decode()
+    except Exception as e:
+        print(f"[ERROR] {e}")
+        return None
 
-            # Send query to root server
-            client_socket.sendto(domain_name.encode(), (HOST, ROOT_PORT))
+# Function to send a query to the TLD server
+def query_tld_server(domain, tld_server_ip, tld_server_port):
+    try:
+        # Create socket for UDP
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.sendto(domain.encode(), (tld_server_ip, tld_server_port))
+            response, _ = s.recvfrom(1024)
+            print(f"TLD Server Response: {response.decode()}")
+            return response.decode()
+    except Exception as e:
+        print(f"[ERROR] {e}")
+        return None
 
-            # Receive and handle response from Root DNS
-            response = client_socket.recv(1024).decode()  
+# Function to send a query to the authoritative server
+def query_auth_server(domain, auth_server_ip, auth_server_port):
+    try:
+        # Create socket for UDP
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.sendto(domain.encode(), (auth_server_ip, auth_server_port))
+            response, _ = s.recvfrom(1024)
+            print(f"Authoritative Server Response: {response.decode()}")
+            return response.decode()
+    except Exception as e:
+        print(f"[ERROR] {e}")
+        return None
 
-            if "Redirect to TLD server" in response:
-                try:
-                    # Extract the TLD server info part from the response
-                    tld_server_info = response.split("Redirect to TLD server:")[1].strip()
+# Main client function
+def resolve_domain(domain):
+    print(f"Resolving domain: {domain}")
+    
+    # Step 1: Query Root Server
+    root_response = query_root_server(domain)
+    if root_response and "Redirect" in root_response:
+        # Extract TLD server info from root server's response
+        tld_server_ip = root_response.split(":")[1].strip()
+        tld_server_port = root_response.split(":")[2]
+        tld_server_port = int(tld_server_port)
+        
+        # Step 2: Query TLD Server
+        tld_response = query_tld_server(domain, tld_server_ip, tld_server_port)
+        if tld_response and "Redirecting" in tld_response:
+            # Extract authoritative server info from TLD server's response
+            auth_server_ip= tld_response.split(":")[1].strip()
+            auth_server_port = tld_response.split(":")[2]
+            auth_server_port = int(auth_server_port)
+            
+            # Step 3: Query Authoritative Server
+            query_auth_server(domain, auth_server_ip, auth_server_port)
+        else:
+            print("[ERROR] No valid redirection from TLD server.")
+    else:
+        print("[ERROR] No valid redirection from Root server.")
 
-                    # Extract the IP and port
-                    tld_ip, tld_port = tld_server_info.split(":")
-                    tld_port = int(tld_port)
+# Main loop to take user input
+def main():
+    print("DNS Resolver Client")
+    print("Type 'quit' to exit.")
+    
+    while True:
+        domain_to_resolve = input("Enter domain to resolve: ").strip()
+        if domain_to_resolve.lower() == 'quit':
+            print("Exiting DNS Resolver Client.")
+            break
+        elif domain_to_resolve:
+            resolve_domain(domain_to_resolve)
+        else:
+            print("Please enter a valid domain or 'quit' to exit.")
 
-                    # Send the same domain query to the TLD server
-                    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as tld_socket:
-                        tld_socket.sendto(domain_name.encode(), (tld_ip, tld_port))
-
-                        tld_response = tld_socket.recv(1024).decode()
-
-                        if "Redirect to authoritative server" in tld_response:
-                            # Extract authoritative server address and port from response
-                            authoritative_server_info = tld_response.split("Redirect to authoritative server:")[1].strip()
-
-                            # Extract the IP and port from the authoritative server info
-                            authoritative_ip, authoritative_port = authoritative_server_info.split(":")
-                            authoritative_port = int(authoritative_port) 
-
-                            # Send the domain query to the authoritative server
-                            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as authoritative_socket:
-                                authoritative_socket.sendto(domain_name.encode(), (authoritative_ip, authoritative_port))
-
-                                authoritative_response = authoritative_socket.recv(1024).decode()
-                                print(f"Response: {authoritative_response}")
-                        else:
-                            print("No authoritative server redirect found in TLD response.")
-                except ValueError:
-                    print("[ERROR] Invalid response format. Expected 'IP:PORT' format.")
-            else:
-                print("TLD not found in Root DNS response. Please check the configuration.")
-
+# Run the client
 if __name__ == "__main__":
-    query_dns()
+    main()

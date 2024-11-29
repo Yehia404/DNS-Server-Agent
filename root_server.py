@@ -4,7 +4,7 @@ from config import HOST, ROOT_PORT
 # Root DNS Table (mapping TLD to server)
 root_dns_table = {
     ".com": ("127.0.0.1", 1500),  # TLD server for .com
-    # ".org": ("127.0.0.1", 1600),  # TLD server for .org
+    ".org": ("127.0.0.1", 1600),  # TLD server for .org
 }
 
 def handle_client(client_data, client_address, server_socket):
