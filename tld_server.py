@@ -3,51 +3,68 @@ import json
 import sys
 from config import HOST
 
-# Function to load the TLD table from the provided JSON file
-def load_tld_table(tld_table_file):
+# Load TLD table from JSON file
+def load_tld_table(file_path):
     try:
-        with open(tld_table_file, "r") as file:
+        with open(file_path, 'r') as file:
             return json.load(file)
     except Exception as e:
         print(f"[ERROR] Failed to load TLD table: {e}")
         sys.exit(1)
 
-# Function to handle client requests
-def handle_client(client_data, client_address, server_socket, tld_table, tld):
+# Function to parse a DNS query
+def parse_dns_query(data):
+    qname = []
+    index = 12
+    length = data[index]
+    while length != 0:
+        index += 1
+        qname.append(data[index:index + length].decode())
+        index += length
+        length = data[index]
+
+    domain_name = ".".join(qname)
+    qtype = int.from_bytes(data[index + 1:index + 3], byteorder='big')
+    return domain_name, qtype
+
+# Function to create a DNS response
+def create_dns_response(query_id, flags, answers):
+    header = query_id + flags + (1).to_bytes(2, 'big') + (len(answers)).to_bytes(2, 'big') + (0).to_bytes(2, 'big') + (0).to_bytes(2, 'big')
+    response_body = b''.join(answers)
+    return header + response_body
+
+# Handle incoming client queries
+def handle_client(client_data, client_address, server_socket, tld_table):
     try:
-        # Decode the domain query
-        data = client_data.decode()
-        if not data:
-            print("[TLD] Received empty query.")
-            return
+        domain_name, qtype = parse_dns_query(client_data)
+        print(f"[TLD] Received query for domain: {domain_name} with type: {qtype}")
 
-        print(f"[TLD] Received query: '{data}' from {client_address}")
-
-        # Check if the TLD is in the table
-        if tld in tld_table:
-            # If TLD is found, check the domain
-            domain_data = tld_table[tld].get(data, None)
-            if domain_data:
-                # Format response with server information
-                response = f"Redirecting to authoritative server: {domain_data[0]}:{domain_data[1]}"
-                print(f"[TLD] Redirecting to authoritative server {domain_data[0]}:{domain_data[1]}")
-            else:
-                response = "Domain not found in TLD table."
-                print("[TLD] Domain not found in the TLD table.")
+        if domain_name in tld_table:
+            auth_server_ip, auth_server_port = tld_table[domain_name]
+            ip_bytes = socket.inet_aton(auth_server_ip)
+            port_bytes = auth_server_port.to_bytes(2, 'big')
+            answers = [ip_bytes + port_bytes]
+            response = create_dns_response(client_data[:2], b'\x80\x00', answers)
+            print(f"[TLD] Redirecting to Authoritative server at {auth_server_ip}:{auth_server_port}")
         else:
-            response = f"TLD {tld} not found in the TLD table."
-            print(f"[TLD] TLD '{tld}' not found in the TLD table.")
-
-        # Send the response back to the client
-        server_socket.sendto(response.encode(), client_address)
-
+            print(f"[TLD] Domain '{domain_name}' not found in TLD table.")
+            response = create_dns_response(client_data[:2], b'\x80\x03', [])
+        
+        server_socket.sendto(response, client_address)
     except Exception as e:
         print(f"[TLD ERROR] {e}")
 
-# Start the TLD DNS server
+# Start the server based on the provided TLD
 def start_server(tld_table_file, tld):
-    # Load the TLD table
+    # Load the full TLD table
     tld_table = load_tld_table(tld_table_file)
+
+    # Get the inner TLD table for the specified TLD (e.g., 'com' or 'org')
+    if tld not in tld_table:
+        print(f"[ERROR] TLD '{tld}' not found in the TLD table.")
+        sys.exit(1)
+    
+    tld_data = tld_table[tld]  # Extract the inner table for the given TLD
 
     # Define the fixed port based on TLD
     tld_ports = {
@@ -66,7 +83,7 @@ def start_server(tld_table_file, tld):
 
     while True:
         client_data, client_address = server_socket.recvfrom(1024)
-        handle_client(client_data, client_address, server_socket, tld_table, tld)
+        handle_client(client_data, client_address, server_socket, tld_data)
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:

@@ -3,53 +3,69 @@ import json
 import sys
 from config import HOST
 
-# Function to load the authoritative server table from the provided JSON file
-def load_auth_table(auth_table_file):
+# Load Authoritative table from JSON file
+def load_auth_table(file_path):
     try:
-        with open(auth_table_file, "r") as file:
+        with open(file_path, 'r') as file:
             return json.load(file)
     except Exception as e:
-        print(f"[ERROR] Failed to load Auth table: {e}")
+        print(f"[ERROR] Failed to load Authoritative table: {e}")
         sys.exit(1)
 
-# Function to handle client requests
-def handle_client(client_data, client_address, server_socket, auth_table, domain):
+# Function to parse a DNS query
+def parse_dns_query(data):
+    qname = []
+    index = 12
+    length = data[index]
+    while length != 0:
+        index += 1
+        qname.append(data[index:index + length].decode())
+        index += length
+        length = data[index]
+
+    domain_name = ".".join(qname)
+    qtype = int.from_bytes(data[index + 1:index + 3], byteorder='big')
+    return domain_name, qtype
+
+# Function to create a DNS response
+def create_dns_response(query_id, flags, answers):
+    header = query_id + flags + (1).to_bytes(2, 'big') + (len(answers)).to_bytes(2, 'big') + (0).to_bytes(2, 'big') + (0).to_bytes(2, 'big')
+    response_body = b''.join(answers)
+    return header + response_body
+
+# Handle incoming client queries
+def handle_client(client_data, client_address, server_socket, auth_table):
     try:
-        # Decode the domain query
-        data = client_data.decode()
-        if not data:
-            print("[AUTH] Received empty query.")
-            return
+        domain_name, qtype = parse_dns_query(client_data)
+        print(f"[AUTH] Received query for domain: {domain_name} with type: {qtype}")
 
-        print(f"[AUTH] Received query: '{data}' from {client_address}")
-
-        # Check if the domain is in the table
-        if domain in auth_table:
-            # If domain is found, check the corresponding server and port
-            domain_data = auth_table[domain].get(data, None)
-            if domain_data:
-                # Format response with server information
-                response = f"Domain IP: {domain_data}"
-                print(f"[AUTH] Domain IP {domain_data}")
-            else:
-                response = "Domain not found in authoritative server table."
-                print("[AUTH] Domain not found in the authoritative server table.")
+        if domain_name in auth_table:
+            ip_address = auth_table[domain_name]
+            ip_bytes = socket.inet_aton(ip_address)
+            answers = [ip_bytes]
+            response = create_dns_response(client_data[:2], b'\x80\x00', answers)
+            print(f"[AUTH] Resolved domain {domain_name} to IP {ip_address}")
         else:
-            response = f"Domain {domain} not found in the authoritative server table."
-            print(f"[AUTH] Domain '{domain}' not found in the authoritative server table.")
+            print(f"[AUTH] Domain '{domain_name}' not found in Authoritative table.")
+            response = create_dns_response(client_data[:2], b'\x80\x03', [])
 
-        # Send the response back to the client
-        server_socket.sendto(response.encode(), client_address)
-
+        server_socket.sendto(response, client_address)
     except Exception as e:
         print(f"[AUTH ERROR] {e}")
 
 # Start the authoritative server
 def start_server(auth_table_file, domain):
-    # Load the authoritative server table
+    # Load the full Authoritative table
     auth_table = load_auth_table(auth_table_file)
 
-    # Define the fixed port based on domain (mapped in auth_table)
+    # Get the specific domain's table from the loaded auth table
+    if domain not in auth_table:
+        print(f"[ERROR] Domain '{domain}' not found in the Authoritative table.")
+        sys.exit(1)
+    
+    domain_data = auth_table[domain]  # Extract the domain-specific data
+
+    # Define the fixed port based on domain (mapped in domain_data)
     port_map = {
         "google": 1602,
         "microsoft": 1603,
@@ -68,7 +84,7 @@ def start_server(auth_table_file, domain):
 
     while True:
         client_data, client_address = server_socket.recvfrom(1024)
-        handle_client(client_data, client_address, server_socket, auth_table, domain)
+        handle_client(client_data, client_address, server_socket, domain_data)
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
