@@ -98,8 +98,35 @@ def resolve_domain(domain, query_type):
             auth_response, answer = query_server(dns_query, auth_server_ip, auth_server_port, "Authoritative")
             if auth_response:
                 print("[INFO] Successfully resolved domain.")
-                ip_address = socket.inet_ntoa(answer)
-                print(f"Resolved IP address: {ip_address}")
+    
+                if query_type == "A":
+                    # For A record, expect an IP address
+                    ip_address = socket.inet_ntoa(answer)
+                    print(f"Resolved IP address: {ip_address}")
+
+                elif query_type == "CNAME":
+                    # For CNAME, the answer will be a domain name
+                    cname = answer.decode()
+                    print(f"Resolved CNAME: {cname}")
+
+                elif query_type == "NS":
+                    # For NS, expect the authoritative nameserver(s)
+                    ns_servers = [answer[i:i+len(answer) // len(answer)].decode() for i in range(0, len(answer), len(answer) // len(answer))]
+                    print(f"Resolved NS Servers: {', '.join(ns_servers)}")
+
+                elif query_type == "MX":
+                    # For MX, expect a list of mail servers with priorities
+                    mx_records = []
+                    index = 0
+                    while index < len(answer):
+                        priority = int.from_bytes(answer[index:index+2], 'big')
+                        exchange = answer[index+2:].decode()
+                        mx_records.append({"priority": priority, "exchange": exchange})
+                        index += 2 + len(exchange)
+                    
+                    print("Resolved MX Records:")
+                    for mx in mx_records:
+                        print(f"Priority: {mx['priority']}, Exchange: {mx['exchange']}")
                 
                 
             else:

@@ -1,14 +1,43 @@
 {
     "google": {
-        "google.com": "142.250.190.78"            
+        "google.com": {
+            "A": "142.250.190.78",
+            "NS": ["ns1.google.com", "ns2.google.com"],
+            "MX": [
+                {"priority": 10, "exchange": "smtp.google.com"},
+                {"priority": 20, "exchange": "alt-google.com"}
+            ],
+            "CNAME": "google.global"
+        }
     },
     "microsoft": {
-        "microsoft.com": "20.112.250.133"
+        "microsoft.com": {
+            "A": "20.112.250.133",
+            "NS": ["ns1.microsoft.com", "ns2.microsoft.com"],
+            "MX": [
+                {"priority": 10, "exchange": "smtp.microsoft.com"}
+            ],
+            "CNAME": "microsoft.global"
+        }
     },
     "wikipedia": {
-        "wikipedia.org": "185.15.58.224"
+        "wikipedia.org": {
+            "A": "185.15.58.224",
+            "NS": ["ns1.wikipedia.org", "ns2.wikipedia.org"],
+            "MX": [
+                {"priority": 10, "exchange": "smtp.wikipedia.org"}
+            ],
+            "CNAME": "wikipedia.global"
+        }
     },
     "archive": {
-        "archive.org": "207.241.224.2"
+        "archive.org": {
+            "A": "207.241.224.2",
+            "NS": ["ns1.archive.org", "ns2.archive.org"],
+            "MX": [
+                {"priority": 10, "exchange": "smtp.archive.org"}
+            ],
+            "CNAME": "archive.global"
+        }
     }
 }

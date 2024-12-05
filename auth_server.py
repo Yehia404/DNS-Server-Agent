@@ -33,18 +33,48 @@ def create_dns_response(query_id, flags, answers):
     response_body = b''.join(answers)
     return header + response_body
 
+# Function to resolve A, NS, MX, CNAME query types
+def resolve_query_type(qtype, domain_data):
+    # Retrieve the domain-specific data
+    if domain_data:
+        if qtype == 1:  # A record
+            ip_address = domain_data.get("A")
+            print(ip_address)
+            if ip_address:
+                return socket.inet_aton(ip_address), 4  # 4 bytes for an A record
+        elif qtype == 2:  # NS record
+            ns_records = domain_data.get("NS", [])
+            return b''.join([ns.encode() + b'\x00' for ns in ns_records]), 2
+        elif qtype == 15:  # MX record
+            mx_records = domain_data.get("MX", [])
+            mx_answers = b''.join(
+                [(str(mx['priority']).encode() + b' ' + mx['exchange'].encode() + b'\x00') for mx in mx_records]
+            )
+            return mx_answers, 15
+        elif qtype == 5:  # CNAME record
+            cname = domain_data.get("CNAME")
+            if cname:
+                return cname.encode() + b'\x00', 5
+    return None, 0
+
 # Handle incoming client queries
 def handle_client(client_data, client_address, server_socket, auth_table):
     try:
         domain_name, qtype = parse_dns_query(client_data)
         print(f"[AUTH] Received query for domain: {domain_name} with type: {qtype}")
 
+        print(auth_table)
+        print(auth_table[domain_name])
+        # Check if the domain exists in the authoritative table for the given domain
         if domain_name in auth_table:
-            ip_address = auth_table[domain_name]
-            ip_bytes = socket.inet_aton(ip_address)
-            answers = [ip_bytes]
-            response = create_dns_response(client_data[:2], b'\x80\x00', answers)
-            print(f"[AUTH] Resolved domain {domain_name} to IP {ip_address}")
+            answers, record_type = resolve_query_type(qtype, auth_table[domain_name])
+            print(answers)
+            if answers:
+                response = create_dns_response(client_data[:2], b'\x80\x00', [answers])
+                print(f"[AUTH] Resolved domain {domain_name} to {answers}")
+            else:
+                print(f"[AUTH] Record type {qtype} not found for domain {domain_name}")
+                response = create_dns_response(client_data[:2], b'\x80\x03', [])
         else:
             print(f"[AUTH] Domain '{domain_name}' not found in Authoritative table.")
             response = create_dns_response(client_data[:2], b'\x80\x03', [])
