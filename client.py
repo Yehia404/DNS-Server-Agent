@@ -1,6 +1,7 @@
 import socket
 import argparse
 from config import HOST, ROOT_PORT
+import random
 
 # DNS Query Types
 QUERY_TYPES = {
@@ -15,7 +16,7 @@ ROOT_SERVER = (HOST, ROOT_PORT)  # Root server's IP and port
 
 # Function to create a DNS query format
 def create_dns_query(domain, query_type):
-    query_id = 1234  # Fixed ID for simplicity, can be randomized
+    query_id = random.randint(0, 65535)  # Random 16-bit ID
     flags = 0x0100  # Standard query
     qdcount = 1  # Number of questions
     ancount = 0  # Number of answers
