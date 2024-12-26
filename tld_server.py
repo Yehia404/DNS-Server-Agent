@@ -59,7 +59,8 @@ def start_tld_server(tld_table_file, tld):
     # Define the fixed port based on TLD
     tld_ports = {
         "com": 1500,
-        "org": 1600
+        "org": 1600,
+        "arpa": 1700,
     }
 
     if tld not in tld_ports:

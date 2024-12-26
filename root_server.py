@@ -4,7 +4,8 @@ from config import HOST, ROOT_PORT
 # TLD server mappings
 TLD_SERVERS = {
     "com": (HOST, 1500),  # TLD server for .com
-    "org": (HOST, 1600),  # TLD server for .org
+    "org": (HOST, 1600),
+    "arpa": (HOST, 1700),  # TLD server for .org
     # Add more TLDs as needed
 }
 

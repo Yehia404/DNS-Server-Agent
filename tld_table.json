@@ -6,5 +6,8 @@
     "org": {
         "wikipedia.org": ["127.0.0.1", 1604],
         "archive.org": ["127.0.0.1", 1605]
+    },
+    "arpa": {
+        "1.0.0.127.in-addr.arpa": ["localhost", 1606]
     }
 }

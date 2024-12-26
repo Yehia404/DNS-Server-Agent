@@ -7,7 +7,9 @@ RECORD_TYPES = {
     1: 'A',
     2: 'NS',
     5: 'CNAME',
+    12: 'PTR',    # Add PTR record type
     15: 'MX',
+    28: 'AAAA',   # Add AAAA record type
     # Add more types if needed
 }
 
@@ -75,6 +77,8 @@ def encode_domain_name(domain_name):
     encoded += b'\x00'  # Null byte to end the domain name
     return encoded
 
+
+
 def create_dns_response(query, records, qtype):
     transaction_id = query[:2]
     flags = b'\x81\x80'  # Standard query response, No error
@@ -96,6 +100,13 @@ def create_dns_response(query, records, qtype):
         if record['type'] == 'A':
             rdata = socket.inet_aton(record['value'])
             rdlength = b'\x00\x04'  # IPv4 address length
+        elif record['type'] == 'AAAA':
+            rdata = socket.inet_pton(socket.AF_INET6, record['value'])
+            rdlength = len(rdata).to_bytes(2, byteorder='big')
+        elif record['type'] == 'PTR':
+            ptr_name = encode_domain_name(record['value'])
+            rdlength = len(ptr_name).to_bytes(2, byteorder='big')
+            rdata = ptr_name
         elif record['type'] == 'NS':
             ns_name = encode_domain_name(record['value'])
             rdlength = len(ns_name).to_bytes(2, byteorder='big')
@@ -136,6 +147,7 @@ def start_auth_server(auth_table_file, domain):
     port_map = {
         "google": 1602,
         "microsoft": 1603,
+        "arpa": 1606,
         # Add more domains and their ports as needed
     }
 

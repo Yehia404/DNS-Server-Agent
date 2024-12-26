@@ -4,7 +4,8 @@
             {"type": "A", "value": "172.217.14.238"},
             {"type": "NS", "value": "ns1.google.com"},
             {"type": "MX", "value": "alt1.aspmx.l.google.com"},
-            {"type": "CNAME", "value": "www.l.google.com"}
+            {"type": "CNAME", "value": "www.l.google.com"},
+            {"type": "AAAA", "value": "2a00:1450:4009:812::200e"}
         ],
         "mail.google.com": [
             {"type": "CNAME", "value": "mail.google.com"}
@@ -17,5 +18,10 @@
             {"type": "MX", "value": "mail.microsoft.com"},
             {"type": "CNAME", "value": "www.microsoft.com"}
         ]
+    },
+    "arpa": {
+        "1.0.0.127.in-addr.arpa": [
+            {"type": "PTR", "value": "localhost"}
+        ]   
     }
 }
