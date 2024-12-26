@@ -1,14 +1,6 @@
 {
     "google": {
-        "google.com": {
-            "A": "142.250.190.78",
-            "NS": ["ns1.google.com", "ns2.google.com"],
-            "MX": [
-                {"priority": 10, "exchange": "smtp.google.com"},
-                {"priority": 20, "exchange": "alt-google.com"}
-            ],
-            "CNAME": "google.global"
-        }
+        "google.com": "142.250.190.78"
     },
     "microsoft": {
         "microsoft.com": {
