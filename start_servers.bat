@@ -1,10 +1,10 @@
 @echo off
 
-REM Start the Root Server
-start "Root Server" cmd /k "python root_server.py"
-
 REM Start the Recursive Resolver
 start "Recursive Resolver" cmd /k "python recursive_resolver.py"
+
+REM Start the Root Server
+start "Root Server" cmd /k "python root_server.py"
 
 REM Start TLD Servers
 start "TLD Server - com" cmd /k "python tld_server.py tld_table.json com"

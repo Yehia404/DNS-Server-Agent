@@ -1,34 +1,109 @@
 import socket
+import threading
 from config import HOST, ROOT_PORT
 
 # TLD server mappings
 TLD_SERVERS = {
-    "com": (HOST, 1500),  # TLD server for .com
+    "com": (HOST, 1500),
     "org": (HOST, 1600),
-    "arpa": (HOST, 1700),  # TLD server for .org
+    "arpa": (HOST, 1700),
     # Add more TLDs as needed
 }
 
-def handle_client(data, client_address, server_socket):
+def start_root_server():
+    # UDP Socket
+    udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_socket.bind((HOST, ROOT_PORT))
+    print(f"[ROOT] Server started on {HOST}:{ROOT_PORT} (UDP)")
+
+    # TCP Socket
+    tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp_socket.bind((HOST, ROOT_PORT))
+    tcp_socket.listen(5)
+    print(f"[ROOT] Server started on {HOST}:{ROOT_PORT} (TCP)")
+
+    # Start threads to handle UDP and TCP
+    udp_thread = threading.Thread(target=handle_udp_queries, args=(udp_socket,))
+    tcp_thread = threading.Thread(target=handle_tcp_queries, args=(tcp_socket,))
+
+    udp_thread.start()
+    tcp_thread.start()
+
+    udp_thread.join()
+    tcp_thread.join()
+
+def handle_udp_queries(udp_socket):
+    while True:
+        data, client_address = udp_socket.recvfrom(512)
+        handle_client(data, client_address, udp_socket, protocol='udp')
+
+def handle_tcp_queries(tcp_socket):
+    while True:
+        client_socket, client_address = tcp_socket.accept()
+        threading.Thread(target=handle_tcp_connection, args=(client_socket, client_address)).start()
+
+def handle_tcp_connection(client_socket, client_address):
+    try:
+        while True:
+            # Read the two-byte length field
+            length_data = client_socket.recv(2)
+            if not length_data:
+                break  # Client closed the connection
+            message_length = int.from_bytes(length_data, byteorder='big')
+            # Read the DNS query message
+            data = b''
+            while len(data) < message_length:
+                chunk = client_socket.recv(message_length - len(data))
+                if not chunk:
+                    break
+                data += chunk
+            if not data:
+                break
+            response = handle_client(data, client_address, None, protocol='tcp')
+            if response:
+                # Send the two-byte length prefix
+                response_length = len(response).to_bytes(2, byteorder='big')
+                client_socket.sendall(response_length + response)
+    except Exception as e:
+        print(f"[ROOT TCP ERROR] {e}")
+    finally:
+        client_socket.close()
+
+def handle_client(data, client_address, server_socket, protocol='udp'):
     # Extract domain name from the DNS query
     domain_name = extract_domain_name(data)
-    print(f"[ROOT] Received query for '{domain_name}'")
+    print(f"[ROOT][{protocol.upper()}] Received query for '{domain_name}'")
     tld = domain_name.split('.')[-1]
-    
+
     if tld in TLD_SERVERS:
         tld_ip, tld_port = TLD_SERVERS[tld]
         # Forward query to the TLD server
         print(f"[ROOT] Redirecting to TLD server {tld_ip}:{tld_port}")
-        server_socket.sendto(data, (tld_ip, tld_port))
-        # Receive response from the TLD server
-        response, _ = server_socket.recvfrom(1024)
-        # Send the response back to the client
-        server_socket.sendto(response, client_address)
+        forward_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        forward_socket.settimeout(5)
+        try:
+            forward_socket.sendto(data, (tld_ip, tld_port))
+            response, _ = forward_socket.recvfrom(1024)
+            if protocol == 'udp':
+                server_socket.sendto(response, client_address)
+            elif protocol == 'tcp':
+                return response
+        except Exception as e:
+            print(f"[ROOT ERROR] {e}")
+            error_response = create_dns_error_response(data)
+            if protocol == 'udp':
+                server_socket.sendto(error_response, client_address)
+            elif protocol == 'tcp':
+                return error_response
+        finally:
+            forward_socket.close()
     else:
         print(f"[ROOT] TLD '{tld}' not found.")
-        # Send an error response to the client
         error_response = create_dns_error_response(data)
-        server_socket.sendto(error_response, client_address)
+        if protocol == 'udp':
+            server_socket.sendto(error_response, client_address)
+        elif protocol == 'tcp':
+            return error_response
 
 def extract_domain_name(data):
     # Parse the domain name from DNS query

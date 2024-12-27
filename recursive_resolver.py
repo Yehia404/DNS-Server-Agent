@@ -1,25 +1,76 @@
 # recursive_resolver.py
+
 import socket
 import time
-import struct
+import threading
 from config import HOST, ROOT_PORT
 
 RECURSOR_PORT = 53  # Port on which the recursive resolver will listen
 
-
 def start_recursive_resolver():
-    resolver_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    resolver_socket.bind((HOST, RECURSOR_PORT))
-    print(f"[RECURSIVE RESOLVER] Listening on {HOST}:{RECURSOR_PORT}")
+    # UDP Socket
+    udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_socket.bind((HOST, RECURSOR_PORT))
+    print(f"[RECURSIVE RESOLVER] Listening on {HOST}:{RECURSOR_PORT} (UDP)")
+
+    # TCP Socket
+    tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp_socket.bind((HOST, RECURSOR_PORT))
+    tcp_socket.listen(5)
+    print(f"[RECURSIVE RESOLVER] Listening on {HOST}:{RECURSOR_PORT} (TCP)")
 
     cache = {}
 
-    while True:
-        data, client_address = resolver_socket.recvfrom(512)
-        handle_query(data, client_address, resolver_socket, cache)
+    # Start threads to handle UDP and TCP
+    udp_thread = threading.Thread(target=handle_udp_queries, args=(udp_socket, cache))
+    tcp_thread = threading.Thread(target=handle_tcp_queries, args=(tcp_socket, cache))
 
-def handle_query(data, client_address, resolver_socket, cache):
+    udp_thread.start()
+    tcp_thread.start()
+
+    udp_thread.join()
+    tcp_thread.join()
+
+def handle_udp_queries(udp_socket, cache):
+    while True:
+        data, client_address = udp_socket.recvfrom(512)
+        handle_query(data, client_address, udp_socket, cache, protocol='udp')
+
+def handle_tcp_queries(tcp_socket, cache):
+    while True:
+        client_socket, client_address = tcp_socket.accept()
+        threading.Thread(target=handle_tcp_connection, args=(client_socket, client_address, cache)).start()
+
+def handle_tcp_connection(client_socket, client_address, cache):
+    try:
+        while True:
+            # Read the two-byte length field
+            length_data = client_socket.recv(2)
+            if not length_data:
+                break  # Client closed the connection
+            message_length = int.from_bytes(length_data, byteorder='big')
+            # Read the DNS query message
+            data = b''
+            while len(data) < message_length:
+                chunk = client_socket.recv(message_length - len(data))
+                if not chunk:
+                    break
+                data += chunk
+            if not data:
+                break
+            response = handle_query(data, client_address, None, cache, protocol='tcp')
+            if response:
+                # Send the two-byte length prefix
+                response_length = len(response).to_bytes(2, byteorder='big')
+                client_socket.sendall(response_length + response)
+    except Exception as e:
+        print(f"[TCP ERROR] {e}")
+    finally:
+        client_socket.close()
+
+def handle_query(data, client_address, socket, cache, protocol='udp'):
     domain_name, qtype = extract_query_info(data)
+    print(f"[RECURSIVE RESOLVER][{protocol.upper()}] Received query for '{domain_name}' with type {qtype}")
     cache_key = (domain_name, qtype)
     current_time = time.time()
 
@@ -30,7 +81,10 @@ def handle_query(data, client_address, resolver_socket, cache):
             print(f"[CACHE HIT] Serving '{domain_name}' type {qtype} from cache.")
             # Update the transaction ID to match the client's query
             response = data[:2] + cache_entry['response'][2:]
-            resolver_socket.sendto(response, client_address)
+            if protocol == 'udp':
+                socket.sendto(response, client_address)
+            elif protocol == 'tcp':
+                return response
             return
         else:
             # Cache entry has expired
@@ -49,15 +103,21 @@ def handle_query(data, client_address, resolver_socket, cache):
             print(f"[CACHE STORE] Caching '{domain_name}' type {qtype} for {ttl} seconds.")
         else:
             print("[WARNING] No TTL found in response; not caching.")
-        resolver_socket.sendto(response, client_address)
+        if protocol == 'udp':
+            socket.sendto(response, client_address)
+        elif protocol == 'tcp':
+            return response
     else:
         print(f"[ERROR] Could not resolve '{domain_name}' type {qtype}.")
         error_response = create_dns_error_response(data)
-        resolver_socket.sendto(error_response, client_address)
+        if protocol == 'udp':
+            socket.sendto(error_response, client_address)
+        elif protocol == 'tcp':
+            return error_response
 
 def extract_query_info(data):
     # Parse the DNS query to extract the domain name and query type
-    index = 12  # Start after the header
+    index = 12  # Start after the DNS header
     domain_parts = []
     while True:
         length = data[index]
@@ -69,7 +129,7 @@ def extract_query_info(data):
         index += length
     domain_name = '.'.join(domain_parts)
     qtype = int.from_bytes(data[index:index+2], 'big')
-    qclass = int.from_bytes(data[index+2:index+4], 'big')
+    # qclass = int.from_bytes(data[index+2:index+4], 'big')  # Not used
     return domain_name, qtype
 
 def perform_recursive_resolution(query_data, server_address):
@@ -109,19 +169,19 @@ def perform_recursive_resolution(query_data, server_address):
         client_socket.close()
 
 def extract_ttl(response):
-    index = 12  # Skip the header
+    index = 12  # Skip the DNS header
     # Skip the question section
     while response[index] != 0:
         index += response[index] + 1
-    index += 5  # Skip the null byte and QTYPE (2 bytes) and QCLASS (2 bytes)
+    index += 5  # Skip null byte and QTYPE/QCLASS
 
     # Now at the beginning of the answer section
     answer_count = int.from_bytes(response[6:8], 'big')
     if answer_count == 0:
         return None  # No answer section
     index += 2  # Name (compressed pointer, 2 bytes)
-    index += 2  # Type (2 bytes)
-    index += 2  # Class (2 bytes)
+    index += 2  # Type
+    index += 2  # Class
     ttl = int.from_bytes(response[index:index+4], 'big')
     return ttl
 

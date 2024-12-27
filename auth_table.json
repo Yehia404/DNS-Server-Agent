@@ -18,8 +18,8 @@
         ]
     },
     "arpa": {
-        "109.1.168.192.in-addr.arpa": [
-            {"type": "PTR", "value": "b7bk ya yehia"}
+        "53.1.168.192.in-addr.arpa": [
+            {"type": "PTR", "value": "localhost"}
         ],
         "238.14.217.172.in-addr.arpa": [
             {"type": "PTR", "value": "google.com"}

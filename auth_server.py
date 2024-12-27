@@ -21,15 +21,102 @@ def load_auth_table(auth_table_file):
         print(f"[ERROR] Failed to load Auth table: {e}")
         sys.exit(1)
 
-def handle_client(data, client_address, server_socket, auth_table):
+import threading
+
+def start_auth_server(auth_table_file, domain):
+    # Load the authoritative server table
+    auth_table_complete = load_auth_table(auth_table_file)
+
+    if domain not in auth_table_complete:
+        print(f"[ERROR] Domain '{domain}' not found in auth table.")
+        sys.exit(1)
+
+    auth_table = auth_table_complete[domain]
+
+    port_map = {
+        "google": 1602,
+        "microsoft": 1603,
+        "arpa": 1606,
+        # Add more domains and their ports as needed
+    }
+
+    if domain not in port_map:
+        print(f"[ERROR] Unknown domain '{domain}'. Valid domains are: {list(port_map.keys())}.")
+        sys.exit(1)
+
+    port = port_map[domain]
+
+    # UDP Socket
+    udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    udp_socket.bind((HOST, port))
+    print(f"[AUTH SERVER] Running on {HOST}:{port} (UDP) for domain '{domain}'")
+
+    # TCP Socket
+    tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    tcp_socket.bind((HOST, port))
+    tcp_socket.listen(5)
+    print(f"[AUTH SERVER] Running on {HOST}:{port} (TCP) for domain '{domain}'")
+
+    # Start threads to handle UDP and TCP
+    udp_thread = threading.Thread(target=handle_udp_queries, args=(udp_socket, auth_table))
+    tcp_thread = threading.Thread(target=handle_tcp_queries, args=(tcp_socket, auth_table))
+
+    udp_thread.start()
+    tcp_thread.start()
+
+    udp_thread.join()
+    tcp_thread.join()
+
+def handle_udp_queries(udp_socket, auth_table):
+    while True:
+        data, client_address = udp_socket.recvfrom(512)
+        handle_client(data, client_address, udp_socket, auth_table, protocol='udp')
+
+def handle_tcp_queries(tcp_socket, auth_table):
+    while True:
+        client_socket, client_address = tcp_socket.accept()
+        threading.Thread(target=handle_tcp_connection, args=(client_socket, client_address, auth_table)).start()
+
+def handle_tcp_connection(client_socket, client_address, auth_table):
+    try:
+        while True:
+            # Read the two-byte length field
+            length_data = client_socket.recv(2)
+            if not length_data:
+                break  # Client closed the connection
+            message_length = int.from_bytes(length_data, byteorder='big')
+            # Read the DNS query message
+            data = b''
+            while len(data) < message_length:
+                chunk = client_socket.recv(message_length - len(data))
+                if not chunk:
+                    break
+                data += chunk
+            if not data:
+                break
+            response = handle_client(data, client_address, None, auth_table, protocol='tcp')
+            if response:
+                # Send the two-byte length prefix
+                response_length = len(response).to_bytes(2, byteorder='big')
+                client_socket.sendall(response_length + response)
+    except Exception as e:
+        print(f"[AUTH TCP ERROR] {e}")
+    finally:
+        client_socket.close()
+
+
+def handle_client(data, client_address, server_socket, auth_table, protocol='udp'):
     domain_name, qtype = extract_query_info(data)
-    print(f"[AUTH] Received query for '{domain_name}' with type {qtype}")
+    print(f"[AUTH][{protocol.upper()}] Received query for '{domain_name}' with type {qtype}")
     record_type = RECORD_TYPES.get(qtype, None)
-    print(f"[AUTH] Record type: {record_type}")
+
     if not record_type:
         print(f"[AUTH] Unsupported query type: {qtype}")
         error_response = create_dns_error_response(data)
-        server_socket.sendto(error_response, client_address)
+        if protocol == 'udp':
+            server_socket.sendto(error_response, client_address)
+        elif protocol == 'tcp':
+            return error_response
         return
 
     if domain_name in auth_table:
@@ -37,15 +124,24 @@ def handle_client(data, client_address, server_socket, auth_table):
         answers = [r for r in records if r['type'] == record_type]
         if answers:
             response = create_dns_response(data, answers, qtype)
-            server_socket.sendto(response, client_address)
+            if protocol == 'udp':
+                server_socket.sendto(response, client_address)
+            elif protocol == 'tcp':
+                return response
         else:
             print(f"[AUTH] No {record_type} record found for '{domain_name}'")
             error_response = create_dns_error_response(data)
-            server_socket.sendto(error_response, client_address)
+            if protocol == 'udp':
+                server_socket.sendto(error_response, client_address)
+            elif protocol == 'tcp':
+                return error_response
     else:
         print(f"[AUTH] Domain '{domain_name}' not found.")
         error_response = create_dns_error_response(data)
-        server_socket.sendto(error_response, client_address)
+        if protocol == 'udp':
+            server_socket.sendto(error_response, client_address)
+        elif protocol == 'tcp':
+            return error_response
 
 def extract_query_info(data):
     query_section = data[12:]
@@ -76,8 +172,6 @@ def encode_domain_name(domain_name):
         encoded += bytes([length]) + part.encode()
     encoded += b'\x00'  # Null byte to end the domain name
     return encoded
-
-
 
 def create_dns_response(query, records, qtype):
     transaction_id = query[:2]
@@ -134,35 +228,6 @@ def create_dns_error_response(query):
     rest = query[4:]
     return transaction_id + flags + rest
 
-def start_auth_server(auth_table_file, domain):
-    # Load the authoritative server table
-    auth_table_complete = load_auth_table(auth_table_file)
-
-    if domain not in auth_table_complete:
-        print(f"[ERROR] Domain '{domain}' not found in auth table.")
-        sys.exit(1)
-
-    auth_table = auth_table_complete[domain]
-
-    port_map = {
-        "google": 1602,
-        "microsoft": 1603,
-        "arpa": 1606,
-        # Add more domains and their ports as needed
-    }
-
-    if domain not in port_map:
-        print(f"[ERROR] Unknown domain '{domain}'. Valid domains are: {list(port_map.keys())}.")
-        sys.exit(1)
-
-    port = port_map[domain]
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    server_socket.bind((HOST, port))
-    print(f"[AUTH SERVER] Running on port {port} for domain '{domain}'")
-
-    while True:
-        data, client_address = server_socket.recvfrom(1024)
-        handle_client(data, client_address, server_socket, auth_table)
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
