@@ -6,9 +6,6 @@
             {"type": "MX", "value": "alt1.aspmx.l.google.com"},
             {"type": "CNAME", "value": "www.l.google.com"},
             {"type": "AAAA", "value": "2a00:1450:4009:812::200e"}
-        ],
-        "mail.google.com": [
-            {"type": "CNAME", "value": "mail.google.com"}
         ]
     },
     "microsoft": {
@@ -16,12 +13,19 @@
             {"type": "A", "value": "23.100.122.175"},
             {"type": "NS", "value": "ns1.microsoft.com"},
             {"type": "MX", "value": "mail.microsoft.com"},
-            {"type": "CNAME", "value": "www.microsoft.com"}
+            {"type": "CNAME", "value": "www.microsoft.com"},
+            {"type": "AAAA", "value": "2a01:111:2000:7::1"}
         ]
     },
     "arpa": {
         "1.0.0.127.in-addr.arpa": [
             {"type": "PTR", "value": "localhost"}
+        ],
+        "238.14.217.172.in-addr.arpa": [
+            {"type": "PTR", "value": "google.com"}
+        ],
+        "175.122.100.23.in-addr.arpa": [
+            {"type": "PTR", "value": "microsoft.com"}
         ]   
     }
 }

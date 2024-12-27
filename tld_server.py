@@ -12,20 +12,29 @@ def load_tld_table(tld_table_file):
         print(f"[ERROR] Failed to load TLD table: {e}")
         sys.exit(1)
 
-def handle_client(data, client_address, server_socket,tld_table):
+def handle_client(data, client_address, server_socket, tld_data):
     domain_name = extract_domain_name(data)
     print(f"[TLD] Received query for '{domain_name}'")
-    print(tld_table)
-    if domain_name in tld_table:
-        auth_ip, auth_port = tld_table[domain_name]
+    print(f"Available domains in TLD data: {tld_data.keys()}")
+
+    # Find the longest matching domain suffix in tld_data
+    matching_domain = None
+    for tld_domain in tld_data:
+        if domain_name.endswith(tld_domain):
+            if not matching_domain or len(tld_domain) > len(matching_domain):
+                matching_domain = tld_domain
+
+    if matching_domain:
+        auth_ip, auth_port = tld_data[matching_domain]
+        print(f"[TLD] Forwarding query for '{domain_name}' to authoritative server {auth_ip}:{auth_port}")
         # Forward query to the authoritative server
         server_socket.sendto(data, (auth_ip, auth_port))
         # Receive response from the authoritative server
         response, _ = server_socket.recvfrom(1024)
-        # Send the response back to the root server
+        # Send the response back to the client
         server_socket.sendto(response, client_address)
     else:
-        print(f"[TLD] Domain '{domain_name}' not found.")
+        print(f"[TLD] Domain '{domain_name}' not found in TLD data.")
         # Send an error response to the client
         error_response = create_dns_error_response(data)
         server_socket.sendto(error_response, client_address)
