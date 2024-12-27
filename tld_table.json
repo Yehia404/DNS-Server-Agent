@@ -1,13 +1,13 @@
 {
     "com": {
-        "google.com": ["127.0.0.1", 1602],
-        "microsoft.com": ["127.0.0.1",1603]
+        "google.com": ["{{HOST}}", 1602],
+        "microsoft.com": ["{{HOST}}",1603]
     },
     "org": {
-        "wikipedia.org": ["127.0.0.1", 1604],
-        "archive.org": ["127.0.0.1", 1605]
+        "wikipedia.org": ["{{HOST}}", 1604],
+        "archive.org": ["{{HOST}}", 1605]
     },
     "arpa": {
-        "in-addr.arpa": ["127.0.0.1", 1606]
+        "in-addr.arpa": ["{{HOST}}", 1606]
     }
 }

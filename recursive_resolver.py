@@ -11,9 +11,9 @@ def start_recursive_resolver():
     resolver_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     resolver_socket.bind((HOST, RECURSOR_PORT))
     print(f"[RECURSIVE RESOLVER] Listening on {HOST}:{RECURSOR_PORT}")
-    
+
     cache = {}
-    
+
     while True:
         data, client_address = resolver_socket.recvfrom(512)
         handle_query(data, client_address, resolver_socket, cache)
@@ -22,7 +22,7 @@ def handle_query(data, client_address, resolver_socket, cache):
     domain_name, qtype = extract_query_info(data)
     cache_key = (domain_name, qtype)
     current_time = time.time()
-    
+
     # Check if the response is in the cache
     if cache_key in cache:
         cache_entry = cache[cache_key]
@@ -36,10 +36,10 @@ def handle_query(data, client_address, resolver_socket, cache):
             # Cache entry has expired
             print(f"[CACHE EXPIRED] Removing '{domain_name}' type {qtype} from cache.")
             del cache[cache_key]
-    
+
     # Cache miss, perform recursive resolution
     print(f"[CACHE MISS] Performing recursive resolution for '{domain_name}' type {qtype}")
-    response = perform_recursive_resolution(data, ('localhost', ROOT_PORT))
+    response = perform_recursive_resolution(data, (HOST, ROOT_PORT))
     if response:
         # Extract TTL from the response
         ttl = extract_ttl(response)
@@ -80,7 +80,7 @@ def perform_recursive_resolution(query_data, server_address):
         while True:
             client_socket.sendto(query_data, current_server)
             response_data, addr = client_socket.recvfrom(512)
-            
+
             # Check for an answer in the response
             answer_count = int.from_bytes(response_data[6:8], 'big')
             if answer_count > 0:

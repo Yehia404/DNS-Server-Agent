@@ -5,11 +5,21 @@ from config import HOST
 
 
 def load_tld_table(tld_table_file):
+
     try:
+
         with open(tld_table_file, "r") as file:
-            return json.load(file)
+
+            json_content = file.read()
+
+            json_content = json_content.replace("{{HOST}}", HOST)
+
+            return json.loads(json_content)
+
     except Exception as e:
+
         print(f"[ERROR] Failed to load TLD table: {e}")
+
         sys.exit(1)
 
 def handle_client(data, client_address, server_socket, tld_data):
@@ -93,5 +103,5 @@ if __name__ == "__main__":
 
     tld_table_file = sys.argv[1]  # Path to the TLD table JSON file
     tld = sys.argv[2]  # The TLD to use (e.g., 'com' or 'org')
-    
+
     start_tld_server(tld_table_file, tld)
