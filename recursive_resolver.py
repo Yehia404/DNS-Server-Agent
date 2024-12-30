@@ -72,6 +72,7 @@ def handle_tcp_connection(client_socket, client_address, cache):
 def handle_query(data, client_address, socket, cache, protocol='udp'):
     try:
         domain_name, qtype = extract_query_info(data)
+        domain_name = domain_name.lower()
     except Exception as e:
         print(f"[ERROR] Format error in query from {client_address}: {e}")
         error_response = create_dns_error_response(data, rcode=1)  # Format Error
