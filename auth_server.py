@@ -34,6 +34,9 @@ def start_auth_server(auth_table_file, domain):
 
     auth_table = auth_table_complete[domain]
 
+    # Convert keys in auth_table to lowercase
+    auth_table = {domain_name.lower(): records for domain_name, records in auth_table.items()}
+
     port_map = {
         "google": 1602,
         "microsoft": 1603,
@@ -115,6 +118,8 @@ def handle_client(data, client_address, server_socket, auth_table, protocol='udp
         send_response(server_socket, error_response, client_address, protocol)
         return
 
+    domain_name = domain_name.lower()  # Ensure domain name is in lowercase
+
     print(f"[AUTH][{protocol.upper()}] Received query for '{domain_name}' with type {qtype}")
 
     # Check if the query type is supported
@@ -166,7 +171,8 @@ def extract_query_info(data):
             if (length & 0xC0) == 0xC0:
                 # Handle name compression
                 pointer = ((length & 0x3F) << 8) | data[index + 1]
-                labels += parse_labels(data, pointer)[0]
+                labels_part, _ = parse_labels(data, pointer)
+                labels += labels_part
                 index += 2
                 break
             else:
@@ -175,11 +181,11 @@ def extract_query_info(data):
                 index += length
         qtype = int.from_bytes(data[index:index+2], 'big')
         # qclass = int.from_bytes(data[index+2:index+4], 'big')
-        domain_name = '.'.join(labels)
+        domain_name = '.'.join(labels).lower()  # Convert to lowercase
         return domain_name, qtype
     except (IndexError, UnicodeDecodeError) as e:
         raise Exception(f"Failed to parse query info: {e}")
-
+    
 def parse_labels(data, index):
     labels = []
     try:
@@ -196,7 +202,7 @@ def parse_labels(data, index):
                 break
             else:
                 index += 1
-                labels.append(data[index:index+length].decode())
+                labels.append(data[index:index+length].decode().lower())  # Convert label to lowercase
                 index += length
     except IndexError:
         raise Exception("Incomplete or malformed label")

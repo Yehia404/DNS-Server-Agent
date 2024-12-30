@@ -91,7 +91,7 @@ def handle_client(data, client_address, server_socket, protocol='udp'):
         send_response(server_socket, error_response, client_address, protocol)
         return
 
-    tld = domain_name.split('.')[-1]
+    tld = domain_name.split('.')[-1].lower()  # Ensure TLD is in lowercase
 
     if tld in TLD_SERVERS:
         tld_ip, tld_port = TLD_SERVERS[tld]
@@ -146,7 +146,7 @@ def extract_query_info(data):
                 index += length
         qtype = int.from_bytes(data[index:index+2], 'big')
         # qclass = int.from_bytes(data[index+2:index+4], 'big')
-        domain_name = '.'.join(labels)
+        domain_name = '.'.join(labels).lower()  # Convert to lowercase
         return domain_name, qtype
     except (IndexError, UnicodeDecodeError) as e:
         raise Exception(f"Failed to parse domain name: {e}")
@@ -166,7 +166,7 @@ def extract_labels(data, index):
             labels.append(data[index:index+length].decode())
             index += length
         index += 1
-    return labels
+    return [label.lower() for label in labels]  # Convert labels to lowercase
 
 def create_dns_error_response(query, rcode):
     transaction_id = query[:2]

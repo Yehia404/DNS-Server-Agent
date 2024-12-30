@@ -72,12 +72,13 @@ def handle_tcp_connection(client_socket, client_address, cache):
 def handle_query(data, client_address, socket, cache, protocol='udp'):
     try:
         domain_name, qtype = extract_query_info(data)
-        domain_name = domain_name.lower()
     except Exception as e:
         print(f"[ERROR] Format error in query from {client_address}: {e}")
         error_response = create_dns_error_response(data, rcode=1)  # Format Error
         send_response(socket, error_response, client_address, protocol)
         return
+
+    domain_name = domain_name.lower()  # Ensure domain name is in lowercase
 
     print(f"[RECURSIVE RESOLVER][{protocol.upper()}] Received query for '{domain_name}' with type {qtype}")
 
@@ -165,7 +166,8 @@ def extract_query_info(data):
     index += 1  # Skip the null byte
     qtype = int.from_bytes(data[index:index+2], 'big')
     # qclass = int.from_bytes(data[index+2:index+4], 'big')  # Not used
-    return '.'.join(domain_parts), qtype
+    domain_name = '.'.join(domain_parts).lower()  # Convert to lowercase
+    return domain_name, qtype
 
 def perform_recursive_resolution(query_data, server_address):
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -319,11 +321,13 @@ def extract_nameservers(response):
         index += 2  # RDLENGTH
         if rtype == 2:  # NS record
             ns_name, _ = parse_name(response, index)
+            ns_name = ns_name.lower()  # Convert to lowercase
             nameservers.append(ns_name)
         index += rdlength  # Move to the next record
     return nameservers
 
 def resolve_nameserver(ns_name):
+    ns_name = ns_name.lower()  # Ensure the nameserver name is in lowercase
     # Simple resolution function to resolve nameserver's IP
     # This function assumes the nameserver name can be resolved via system DNS
     try:
@@ -352,9 +356,11 @@ def parse_name(data, index):
             break
         else:
             index += 1
-            labels.append(data[index:index+length].decode())
+            label = data[index:index+length].decode()
+            labels.append(label)
             index += length
-    return '.'.join(labels), index
+    domain_name = '.'.join(labels).lower()  # Convert to lowercase
+    return domain_name, index
 
 def skip_record(response, index):
     # Helper function to skip over a resource record
