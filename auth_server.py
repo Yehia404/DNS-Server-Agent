@@ -36,8 +36,8 @@ def start_auth_server(auth_table_file, domain):
     port_map = {
         "google": 1602,
         "microsoft": 1603,
-        "arpa": 1606,
-        # Add more domains and their ports as needed
+        "wikipedia": 1604,
+        "arpa": 1606, 
     }
 
     if domain not in port_map:

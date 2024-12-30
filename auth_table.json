@@ -17,6 +17,15 @@
             {"type": "AAAA", "value": "2a01:111:2000:7::1"}
         ]
     },
+    "wikipedia": {
+        "wikipedia.org": [
+            {"type": "A", "value": "91.198.174.192"},
+            {"type": "NS", "value": "ns1.wikimedia.org"},
+            {"type": "MX", "value": "mx1.wikimedia.org"},
+            {"type": "CNAME", "value": "www.wikipedia.org"},
+            {"type": "AAAA", "value": "2620:0:862:ed1a::1"}
+        ]
+    },
     "arpa": {
         "53.1.168.192.in-addr.arpa": [
             {"type": "PTR", "value": "localhost"}
@@ -26,6 +35,9 @@
         ],
         "175.122.100.23.in-addr.arpa": [
             {"type": "PTR", "value": "microsoft.com"}
+        ],
+        "192.174.198.91.in-addr.arpa": [
+            {"type": "PTR", "value": "wikipedia.org"}
         ]
     }
 }

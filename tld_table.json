@@ -4,8 +4,7 @@
         "microsoft.com": ["{{HOST}}",1603]
     },
     "org": {
-        "wikipedia.org": ["{{HOST}}", 1604],
-        "archive.org": ["{{HOST}}", 1605]
+        "wikipedia.org": ["{{HOST}}", 1604]
     },
     "arpa": {
         "in-addr.arpa": ["{{HOST}}", 1606]
