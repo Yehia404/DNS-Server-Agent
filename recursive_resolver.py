@@ -3,6 +3,7 @@
 import socket
 import time
 import threading
+import random
 from config import HOST, ROOT_PORT
 
 RECURSOR_PORT = 53  # Port on which the recursive resolver will listen
@@ -34,7 +35,7 @@ def start_recursive_resolver():
 def handle_udp_queries(udp_socket, cache):
     while True:
         data, client_address = udp_socket.recvfrom(512)
-        handle_query(data, client_address, udp_socket, cache, protocol='udp')
+        threading.Thread(target=handle_query, args=(data, client_address, udp_socket, cache, 'udp')).start()
 
 def handle_tcp_queries(tcp_socket, cache):
     while True:
@@ -58,7 +59,7 @@ def handle_tcp_connection(client_socket, client_address, cache):
                 data += chunk
             if not data:
                 break
-            response = handle_query(data, client_address, None, cache, protocol='tcp')
+            response = handle_query(data, client_address, None, cache, 'tcp')
             if response:
                 # Send the two-byte length prefix
                 response_length = len(response).to_bytes(2, byteorder='big')
@@ -69,8 +70,24 @@ def handle_tcp_connection(client_socket, client_address, cache):
         client_socket.close()
 
 def handle_query(data, client_address, socket, cache, protocol='udp'):
-    domain_name, qtype = extract_query_info(data)
+    try:
+        domain_name, qtype = extract_query_info(data)
+    except Exception as e:
+        print(f"[ERROR] Format error in query from {client_address}: {e}")
+        error_response = create_dns_error_response(data, rcode=1)  # Format Error
+        send_response(socket, error_response, client_address, protocol)
+        return
+
     print(f"[RECURSIVE RESOLVER][{protocol.upper()}] Received query for '{domain_name}' with type {qtype}")
+
+    # Check if the query type is supported
+    supported_qtypes = [1, 2, 5, 12, 15, 28]  # List of supported QTYPEs
+    if qtype not in supported_qtypes:
+        print(f"[ERROR] Query type {qtype} not implemented.")
+        error_response = create_dns_error_response(data, rcode=4)  # Not Implemented
+        send_response(socket, error_response, client_address, protocol)
+        return
+
     cache_key = (domain_name, qtype)
     current_time = time.time()
 
@@ -79,12 +96,9 @@ def handle_query(data, client_address, socket, cache, protocol='udp'):
         cache_entry = cache[cache_key]
         if cache_entry['expires_at'] > current_time:
             print(f"[CACHE HIT] Serving '{domain_name}' type {qtype} from cache.")
-            # Update the transaction ID to match the client's query
-            response = data[:2] + cache_entry['response'][2:]
-            if protocol == 'udp':
-                socket.sendto(response, client_address)
-            elif protocol == 'tcp':
-                return response
+            # Update the transaction ID and flags to match the client's query
+            response = update_transaction_id(cache_entry['response'], data[:2], data[2])
+            send_response(socket, response, client_address, protocol)
             return
         else:
             # Cache entry has expired
@@ -95,76 +109,124 @@ def handle_query(data, client_address, socket, cache, protocol='udp'):
     print(f"[CACHE MISS] Performing recursive resolution for '{domain_name}' type {qtype}")
     response = perform_recursive_resolution(data, (HOST, ROOT_PORT))
     if response:
-        # Extract TTL from the response
-        ttl = extract_ttl(response)
-        if ttl:
-            expires_at = current_time + ttl
-            cache[cache_key] = {'response': response, 'expires_at': expires_at}
-            print(f"[CACHE STORE] Caching '{domain_name}' type {qtype} for {ttl} seconds.")
+        # Extract RCODE from the response
+        rcode = response[3] & 0x0F
+        if rcode == 0:
+            # Extract TTL from the response
+            ttl = extract_ttl(response)
+            if ttl:
+                expires_at = current_time + ttl
+                cache[cache_key] = {'response': response, 'expires_at': expires_at}
+                print(f"[CACHE STORE] Caching '{domain_name}' type {qtype} for {ttl} seconds.")
+            else:
+                print("[WARNING] No TTL found in response; not caching.")
         else:
-            print("[WARNING] No TTL found in response; not caching.")
-        if protocol == 'udp':
-            socket.sendto(response, client_address)
-        elif protocol == 'tcp':
-            return response
+            print(f"[RECURSIVE RESOLVER] Received error code {rcode} from upstream server.")
+
+        # Update the transaction ID to match the client's query
+        response = update_transaction_id(response, data[:2], data[2])
+        send_response(socket, response, client_address, protocol)
     else:
         print(f"[ERROR] Could not resolve '{domain_name}' type {qtype}.")
-        error_response = create_dns_error_response(data)
-        if protocol == 'udp':
-            socket.sendto(error_response, client_address)
-        elif protocol == 'tcp':
-            return error_response
+        error_response = create_dns_error_response(data, rcode=2)  # Server Failure
+        send_response(socket, error_response, client_address, protocol)
+
+def send_response(socket, response, client_address, protocol):
+    if protocol == 'udp':
+        socket.sendto(response, client_address)
+    elif protocol == 'tcp':
+        # For TCP, the response should be returned to the caller
+        return response
 
 def extract_query_info(data):
     # Parse the DNS query to extract the domain name and query type
     index = 12  # Start after the DNS header
     domain_parts = []
-    while True:
+    try:
         length = data[index]
-        if length == 0:
+    except IndexError:
+        raise ValueError("Invalid DNS query: Insufficient data for domain name.")
+    while length != 0:
+        if (length & 0xC0) == 0xC0:
+            # Name compression pointer
+            pointer = ((length & 0x3F) << 8) | data[index + 1]
+            index = pointer
+            length = data[index]
+            continue
+        else:
             index += 1
-            break
-        index += 1
-        domain_parts.append(data[index:index+length].decode())
-        index += length
-    domain_name = '.'.join(domain_parts)
+            domain_parts.append(data[index:index + length].decode())
+            index += length
+            try:
+                length = data[index]
+            except IndexError:
+                raise ValueError("Invalid DNS query: Unexpected end of data while parsing domain name.")
+    index += 1  # Skip the null byte
     qtype = int.from_bytes(data[index:index+2], 'big')
     # qclass = int.from_bytes(data[index+2:index+4], 'big')  # Not used
-    return domain_name, qtype
+    return '.'.join(domain_parts), qtype
 
 def perform_recursive_resolution(query_data, server_address):
     client_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     client_socket.settimeout(5)
     try:
         current_server = server_address
+        queried_servers = set()
+        retries = 3
         while True:
-            client_socket.sendto(query_data, current_server)
-            response_data, addr = client_socket.recvfrom(512)
+            if current_server in queried_servers:
+                print(f"[RECURSIVE RESOLVER] Detected a loop while querying {current_server}.")
+                return create_dns_error_response(query_data, rcode=2)  # Server Failure
+            queried_servers.add(current_server)
+            try:
+                # Update the transaction ID to a random value
+                transaction_id = random.randint(0, 65535).to_bytes(2, byteorder='big')
+                query_with_id = transaction_id + query_data[2:]
+                client_socket.sendto(query_with_id, current_server)
+                response_data, addr = client_socket.recvfrom(512)
+                # Validate the response transaction ID
+                if response_data[:2] != transaction_id:
+                    print("[RECURSIVE RESOLVER] Transaction ID mismatch.")
+                    continue
+                # Check for an error in the response
+                rcode = response_data[3] & 0x0F
+                if rcode != 0:
+                    print(f"[RESOLVER ERROR] Received error code {rcode} from server {current_server}")
+                    return response_data  # Return the error response
 
-            # Check for an answer in the response
-            answer_count = int.from_bytes(response_data[6:8], 'big')
-            if answer_count > 0:
-                # Found the answer
-                return response_data
-            else:
-                # No answer, check for referral in the additional section
-                additional_count = int.from_bytes(response_data[10:12], 'big')
-                if additional_count > 0:
-                    # Parse the additional section to get the next server
-                    next_server = extract_next_server_address(response_data)
-                    if next_server:
-                        print(f"[RECURSIVE RESOLVER] Querying next server: {next_server}")
-                        current_server = (next_server, 53)  # Port 53 is standard for DNS servers
-                        continue
-                    else:
-                        print("[RECURSIVE RESOLVER] No valid additional records found.")
-                        return None
+                answer_count = int.from_bytes(response_data[6:8], 'big')
+                if answer_count > 0:
+                    # Found the answer
+                    return response_data
                 else:
-                    print("[RECURSIVE RESOLVER] No answers or additional records.")
-                    return None
-    except socket.timeout:
-        print("[RECURSIVE RESOLVER] Timeout during recursive resolution.")
-        return None
+                    # No answer, check for referral in the authority section
+                    authority_count = int.from_bytes(response_data[8:10], 'big')
+                    if authority_count > 0:
+                        next_servers = extract_nameservers(response_data)
+                        if next_servers:
+                            next_server_ip = resolve_nameserver(next_servers[0])
+                            if next_server_ip:
+                                print(f"[RECURSIVE RESOLVER] Querying next server: {next_server_ip}")
+                                current_server = (next_server_ip, 53)
+                                continue
+                            else:
+                                print("[RECURSIVE RESOLVER] Could not resolve IP of next nameserver.")
+                                return create_dns_error_response(query_data, rcode=2)  # Server Failure
+                        else:
+                            print("[RECURSIVE RESOLVER] No valid nameservers found in authority section.")
+                            return create_dns_error_response(query_data, rcode=3)  # Name Error
+                    else:
+                        print("[RECURSIVE RESOLVER] No answers or authority records.")
+                        return create_dns_error_response(query_data, rcode=3)  # Name Error
+            except socket.timeout:
+                print(f"[RECURSIVE RESOLVER] Timeout querying server {current_server}. Retrying...")
+                retries -= 1
+                if retries == 0:
+                    print("[RECURSIVE RESOLVER] Maximum retries reached. Server failure.")
+                    return create_dns_error_response(query_data, rcode=2)  # Server Failure
+            except Exception as e:
+                print(f"[RECURSIVE RESOLVER] Exception: {e}")
+                return create_dns_error_response(query_data, rcode=2)  # Server Failure
     finally:
         client_socket.close()
 
@@ -179,28 +241,62 @@ def extract_ttl(response):
     answer_count = int.from_bytes(response[6:8], 'big')
     if answer_count == 0:
         return None  # No answer section
-    index += 2  # Name (compressed pointer, 2 bytes)
+    # For simplicity, extract TTL from the first answer record
+    index += 2  # Name (could be a pointer)
     index += 2  # Type
     index += 2  # Class
     ttl = int.from_bytes(response[index:index+4], 'big')
     return ttl
 
-def create_dns_error_response(query):
+def create_dns_error_response(query, rcode):
     transaction_id = query[:2]
-    flags = b'\x81\x83'  # Standard query response, with RCODE=3 (Name Error)
-    rest = query[4:6] + b'\x00\x00\x00\x00\x00\x00'  # Zero out counts
-    return transaction_id + flags + rest
 
-def extract_next_server_address(response):
-    # Extract the IP address of the next server from the additional records
-    # This function assumes that the next server's IP address is in an A record in the additional section
-    index = 12  # Start after the header
+    # Extract RD flag from query (recursion desired)
+    rd = query[2] & 0x01
+
+    # Set the flags:
+    # - QR (response): 1
+    # - Opcode: copied from query
+    # - AA (authoritative answer): 0
+    # - TC (truncated): 0
+    # - RD (recursion desired): copied from query
+    # - RA (recursion available): 1 (since resolver supports recursion)
+    # - Z (reserved): 0
+    # - RCODE: as per the error
+    flags = (0x8000 | (rd << 8) | 0x0080 | rcode).to_bytes(2, byteorder='big')
+
+    qd_count = query[4:6]
+    an_count = b'\x00\x00'
+    ns_count = b'\x00\x00'
+    ar_count = b'\x00\x00'
+
+    header = transaction_id + flags + qd_count + an_count + ns_count + ar_count
+    question = query[12:]  # Include the Question Section
+
+    return header + question
+
+def update_transaction_id(response, transaction_id, query_flags_byte):
+    # Replace the transaction ID in the response
+    updated_response = transaction_id + response[2:]
+
+    # Copy RD flag from query and set RA flag
+    rd = query_flags_byte & 0x01
+    flags = response[2]
+    flags &= 0xFE  # Clear RD bit
+    flags |= rd    # Set RD bit as per query
+    flags |= 0x80  # Set RA bit (Recursion Available)
+    updated_response = updated_response[:2] + bytes([flags]) + updated_response[3:]
+
+    return updated_response
+
+def extract_nameservers(response):
+    # Extract NS records from the authority section
+    index = 12  # Skip the DNS header
     # Skip the question section
     while response[index] != 0:
         index += response[index] + 1
-    index += 5  # Skip the null byte and QTYPE (2 bytes) and QCLASS (2 bytes)
+    index += 5  # Null byte and QTYPE/QCLASS
 
-    # Skip answer and authority sections
     answer_count = int.from_bytes(response[6:8], 'big')
     authority_count = int.from_bytes(response[8:10], 'big')
     additional_count = int.from_bytes(response[10:12], 'big')
@@ -209,43 +305,59 @@ def extract_next_server_address(response):
     for _ in range(answer_count):
         index = skip_record(response, index)
 
-    # Skip authority records
+    # Extract NS records from authority section
+    nameservers = []
     for _ in range(authority_count):
-        index = skip_record(response, index)
-
-    # Parse additional records to find the next server's IP
-    for _ in range(additional_count):
         start_index = index
-        index = skip_name(response, index)
+        name, index = parse_name(response, index)
         rtype = int.from_bytes(response[index:index+2], 'big')
         index += 2  # Type
         index += 2  # Class
-        ttl = int.from_bytes(response[index:index+4], 'big')
         index += 4  # TTL
         rdlength = int.from_bytes(response[index:index+2], 'big')
         index += 2  # RDLENGTH
-        if rtype == 1:  # A record
-            rdata = response[index:index+rdlength]
-            ip_address = socket.inet_ntoa(rdata)
-            return ip_address
+        if rtype == 2:  # NS record
+            ns_name, _ = parse_name(response, index)
+            nameservers.append(ns_name)
         index += rdlength  # Move to the next record
-    return None
+    return nameservers
 
-def skip_name(response, index):
-    # Helper function to skip over a domain name in the response
-    if response[index] & 0xC0 == 0xC0:
-        # Name is a pointer
-        index += 2
-    else:
-        while response[index] != 0:
-            length = response[index]
-            index += length + 1
-        index += 1  # Skip the null byte
-    return index
+def resolve_nameserver(ns_name):
+    # Simple resolution function to resolve nameserver's IP
+    # This function assumes the nameserver name can be resolved via system DNS
+    try:
+        # Use system resolver to get the IP address
+        ip_addresses = socket.gethostbyname_ex(ns_name)[2]
+        if ip_addresses:
+            return ip_addresses[0]
+        else:
+            return None
+    except Exception as e:
+        print(f"[RECURSIVE RESOLVER] Could not resolve nameserver {ns_name}: {e}")
+        return None
+
+def parse_name(data, index):
+    labels = []
+    while True:
+        length = data[index]
+        if length == 0:
+            index += 1
+            break
+        elif (length & 0xC0) == 0xC0:
+            pointer = ((length & 0x3F) << 8) | data[index + 1]
+            sub_labels, _ = parse_name(data, pointer)
+            labels.extend(sub_labels)
+            index += 2
+            break
+        else:
+            index += 1
+            labels.append(data[index:index+length].decode())
+            index += length
+    return '.'.join(labels), index
 
 def skip_record(response, index):
     # Helper function to skip over a resource record
-    index = skip_name(response, index)
+    _, index = parse_name(response, index)
     index += 2  # Type
     index += 2  # Class
     index += 4  # TTL

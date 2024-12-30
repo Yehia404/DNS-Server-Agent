@@ -1,43 +1,43 @@
 {
     "google": {
-        "google.com": [
-            {"type": "A", "value": "172.217.14.238"},
-            {"type": "NS", "value": "ns1.google.com"},
-            {"type": "MX", "value": "alt1.aspmx.l.google.com"},
-            {"type": "CNAME", "value": "www.l.google.com"},
-            {"type": "AAAA", "value": "2a00:1450:4009:812::200e"}
-        ]
+      "google.com": [
+        {"type": "A","value": "172.217.14.238","ttl": 300},
+        {"type": "NS","value": "ns1.google.com","ttl": 3600},
+        {"type": "MX","value": "alt1.aspmx.l.google.com","ttl": 600,"preference": 10},
+        {"type": "CNAME","value": "www.l.google.com","ttl": 300},
+        {"type": "AAAA","value": "2a00:1450:4009:812::200e","ttl": 300}
+      ]
     },
     "microsoft": {
-        "microsoft.com": [
-            {"type": "A", "value": "23.100.122.175"},
-            {"type": "NS", "value": "ns1.microsoft.com"},
-            {"type": "MX", "value": "mail.microsoft.com"},
-            {"type": "CNAME", "value": "www.microsoft.com"},
-            {"type": "AAAA", "value": "2a01:111:2000:7::1"}
-        ]
+      "microsoft.com": [
+        {"type": "A","value": "23.100.122.175","ttl": 300},
+        {"type": "NS","value": "ns1.microsoft.com","ttl": 3600},
+        {"type": "MX","value": "mail.microsoft.com","ttl": 600,"preference": 10},
+        {"type": "CNAME","value": "www.microsoft.com","ttl": 300},
+        {"type": "AAAA","value": "2a01:111:2000:7::1","ttl": 300}
+      ]
     },
     "wikipedia": {
-        "wikipedia.org": [
-            {"type": "A", "value": "91.198.174.192"},
-            {"type": "NS", "value": "ns1.wikimedia.org"},
-            {"type": "MX", "value": "mx1.wikimedia.org"},
-            {"type": "CNAME", "value": "www.wikipedia.org"},
-            {"type": "AAAA", "value": "2620:0:862:ed1a::1"}
-        ]
+      "wikipedia.org": [
+        {"type": "A","value": "91.198.174.192","ttl": 300},
+        {"type": "NS","value": "ns1.wikimedia.org","ttl": 3600},
+        {"type": "MX","value": "mx1.wikimedia.org","ttl": 600,"preference": 10},
+        {"type": "CNAME","value": "www.wikipedia.org","ttl": 300},
+        {"type": "AAAA","value": "2620:0:862:ed1a::1","ttl": 300}
+      ]
     },
     "arpa": {
-        "53.1.168.192.in-addr.arpa": [
-            {"type": "PTR", "value": "localhost"}
-        ],
-        "238.14.217.172.in-addr.arpa": [
-            {"type": "PTR", "value": "google.com"}
-        ],
-        "175.122.100.23.in-addr.arpa": [
-            {"type": "PTR", "value": "microsoft.com"}
-        ],
-        "192.174.198.91.in-addr.arpa": [
-            {"type": "PTR", "value": "wikipedia.org"}
-        ]
+      "53.1.168.192.in-addr.arpa": [
+        {"type": "PTR","value": "localhost","ttl": 86400}
+      ],
+      "238.14.217.172.in-addr.arpa": [
+        {"type": "PTR","value": "google.com","ttl": 86400}
+      ],
+      "175.122.100.23.in-addr.arpa": [
+        {"type": "PTR","value": "microsoft.com","ttl": 86400}
+      ],
+      "192.174.198.91.in-addr.arpa": [
+        {"type": "PTR","value": "wikipedia.org","ttl": 86400}
+      ]
     }
-}
+  }

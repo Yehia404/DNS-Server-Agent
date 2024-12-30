@@ -1,3 +1,5 @@
+# root_server.py
+
 import socket
 import threading
 from config import HOST, ROOT_PORT
@@ -35,7 +37,7 @@ def start_root_server():
 def handle_udp_queries(udp_socket):
     while True:
         data, client_address = udp_socket.recvfrom(512)
-        handle_client(data, client_address, udp_socket, protocol='udp')
+        threading.Thread(target=handle_client, args=(data, client_address, udp_socket, 'udp')).start()
 
 def handle_tcp_queries(tcp_socket):
     while True:
@@ -59,7 +61,7 @@ def handle_tcp_connection(client_socket, client_address):
                 data += chunk
             if not data:
                 break
-            response = handle_client(data, client_address, None, protocol='tcp')
+            response = handle_client(data, client_address, None, 'tcp')
             if response:
                 # Send the two-byte length prefix
                 response_length = len(response).to_bytes(2, byteorder='big')
@@ -70,9 +72,25 @@ def handle_tcp_connection(client_socket, client_address):
         client_socket.close()
 
 def handle_client(data, client_address, server_socket, protocol='udp'):
-    # Extract domain name from the DNS query
-    domain_name = extract_domain_name(data)
-    print(f"[ROOT][{protocol.upper()}] Received query for '{domain_name}'")
+    try:
+        # Extract domain name from the DNS query
+        domain_name, qtype = extract_query_info(data)
+    except Exception as e:
+        print(f"[ROOT ERROR] Format error in query from {client_address}: {e}")
+        error_response = create_dns_error_response(data, rcode=1)  # Format Error
+        send_response(server_socket, error_response, client_address, protocol)
+        return
+
+    print(f"[ROOT][{protocol.upper()}] Received query for '{domain_name}' with type {qtype}")
+
+    # Check if the query type is supported
+    supported_qtypes = [1, 2, 5, 12, 15, 28]  # A, NS, CNAME, PTR, MX, AAAA
+    if qtype not in supported_qtypes:
+        print(f"[ROOT] Query type {qtype} not implemented.")
+        error_response = create_dns_error_response(data, rcode=4)  # Not Implemented
+        send_response(server_socket, error_response, client_address, protocol)
+        return
+
     tld = domain_name.split('.')[-1]
 
     if tld in TLD_SERVERS:
@@ -84,54 +102,92 @@ def handle_client(data, client_address, server_socket, protocol='udp'):
         try:
             forward_socket.sendto(data, (tld_ip, tld_port))
             response, _ = forward_socket.recvfrom(1024)
-            if protocol == 'udp':
-                server_socket.sendto(response, client_address)
-            elif protocol == 'tcp':
-                return response
+            send_response(server_socket, response, client_address, protocol)
+        except socket.timeout:
+            print(f"[ROOT ERROR] Timeout when contacting TLD server {tld_ip}:{tld_port}")
+            error_response = create_dns_error_response(data, rcode=2)  # Server Failure
+            send_response(server_socket, error_response, client_address, protocol)
         except Exception as e:
             print(f"[ROOT ERROR] {e}")
-            error_response = create_dns_error_response(data)
-            if protocol == 'udp':
-                server_socket.sendto(error_response, client_address)
-            elif protocol == 'tcp':
-                return error_response
+            error_response = create_dns_error_response(data, rcode=2)  # Server Failure
+            send_response(server_socket, error_response, client_address, protocol)
         finally:
             forward_socket.close()
     else:
         print(f"[ROOT] TLD '{tld}' not found.")
-        error_response = create_dns_error_response(data)
-        if protocol == 'udp':
-            server_socket.sendto(error_response, client_address)
-        elif protocol == 'tcp':
-            return error_response
+        error_response = create_dns_error_response(data, rcode=3)  # Name Error
+        send_response(server_socket, error_response, client_address, protocol)
 
-def extract_domain_name(data):
-    # Parse the domain name from DNS query
-    query = data[12:]  # Skip the DNS header
-    domain_parts = []
+def send_response(server_socket, response, client_address, protocol):
+    if protocol == 'udp':
+        server_socket.sendto(response, client_address)
+    elif protocol == 'tcp':
+        # For TCP, the response should be returned to the caller
+        return response
+
+def extract_query_info(data):
+    try:
+        index = 12  # Skip the DNS header
+        labels = []
+        while True:
+            length = data[index]
+            if length == 0:
+                index += 1
+                break
+            if (length & 0xC0) == 0xC0:
+                # Name compression pointer
+                pointer = ((length & 0x3F) << 8) | data[index + 1]
+                labels += extract_labels(data, pointer)
+                index += 2
+                break
+            else:
+                index += 1
+                labels.append(data[index:index+length].decode())
+                index += length
+        qtype = int.from_bytes(data[index:index+2], 'big')
+        # qclass = int.from_bytes(data[index+2:index+4], 'big')
+        domain_name = '.'.join(labels)
+        return domain_name, qtype
+    except (IndexError, UnicodeDecodeError) as e:
+        raise Exception(f"Failed to parse domain name: {e}")
+
+def extract_labels(data, index):
+    labels = []
     while True:
-        length = query[0]
+        length = data[index]
         if length == 0:
             break
-        domain_parts.append(query[1:1 + length].decode())
-        query = query[1 + length:]
-    return '.'.join(domain_parts)
+        if (length & 0xC0) == 0xC0:
+            # Handle nested pointers (discouraged but possible)
+            pointer = ((length & 0x3F) << 8) | data[index + 1]
+            index = pointer
+        else:
+            index += 1
+            labels.append(data[index:index+length].decode())
+            index += length
+        index += 1
+    return labels
 
-def create_dns_error_response(query):
-    # Create an error response for the DNS query
+def create_dns_error_response(query, rcode):
     transaction_id = query[:2]
-    flags = b'\x81\x83'  # Standard query response, Name Error
-    rest = query[4:]  # Copy the rest of the query
-    return transaction_id + flags + rest
-
-def start_root_server():
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    server_socket.bind((HOST, ROOT_PORT))
-    print(f"[ROOT] Server started on {HOST}:{ROOT_PORT}")
-
-    while True:
-        data, client_address = server_socket.recvfrom(1024)
-        handle_client(data, client_address, server_socket)
+    # Extract flags from query
+    flags_query = query[2:4]
+    qr = 1 << 15  # Response flag
+    opcode = (flags_query[0] & 0x78) << 8  # Opcode from query
+    aa = 1 << 10  # Authoritative Answer
+    rd = (flags_query[1] & 0x01) << 8  # Recursion Desired
+    ra = 0  # Recursion Available (root server does not provide recursion)
+    z = 0  # Reserved
+    # Build flags
+    flags = qr | opcode | aa | rd | ra | rcode
+    flags_bytes = flags.to_bytes(2, byteorder='big')
+    qd_count = query[4:6]
+    an_count = b'\x00\x00'
+    ns_count = b'\x00\x00'
+    ar_count = b'\x00\x00'
+    header = transaction_id + flags_bytes + qd_count + an_count + ns_count + ar_count
+    question = query[12:]  # Include the Question Section
+    return header + question
 
 if __name__ == "__main__":
     start_root_server()

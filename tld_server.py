@@ -1,9 +1,20 @@
+# tld_server.py
+
 import socket
 import json
 import sys
-from config import HOST
 import threading
+from config import HOST
 
+RECORD_TYPES = {
+    1: 'A',
+    2: 'NS',
+    5: 'CNAME',
+    12: 'PTR',
+    15: 'MX',
+    28: 'AAAA',
+    # Add more types if needed
+}
 
 def load_tld_table(tld_table_file):
     try:
@@ -18,6 +29,9 @@ def load_tld_table(tld_table_file):
 def start_tld_server(tld_table_file, tld):
     # Load the TLD table
     tld_table = load_tld_table(tld_table_file)
+    if tld not in tld_table:
+        print(f"[ERROR] TLD '{tld}' not found in TLD table.")
+        sys.exit(1)
     tld_data = tld_table[tld]  # Extract the inner table for the given TLD
 
     # Define the fixed port based on TLD
@@ -57,7 +71,7 @@ def start_tld_server(tld_table_file, tld):
 def handle_udp_queries(udp_socket, tld_data):
     while True:
         data, client_address = udp_socket.recvfrom(512)
-        handle_client(data, client_address, udp_socket, tld_data, protocol='udp')
+        threading.Thread(target=handle_client, args=(data, client_address, udp_socket, tld_data, 'udp')).start()
 
 def handle_tcp_queries(tcp_socket, tld_data):
     while True:
@@ -81,7 +95,7 @@ def handle_tcp_connection(client_socket, client_address, tld_data):
                 data += chunk
             if not data:
                 break
-            response = handle_client(data, client_address, None, tld_data, protocol='tcp')
+            response = handle_client(data, client_address, None, tld_data, 'tcp')
             if response:
                 # Send the two-byte length prefix
                 response_length = len(response).to_bytes(2, byteorder='big')
@@ -92,62 +106,138 @@ def handle_tcp_connection(client_socket, client_address, tld_data):
         client_socket.close()
 
 def handle_client(data, client_address, server_socket, tld_data, protocol='udp'):
-    domain_name = extract_domain_name(data)
-    print(f"[TLD][{protocol.upper()}] Received query for '{domain_name}'")
+    try:
+        domain_name, qtype = extract_query_info(data)
+    except Exception as e:
+        print(f"[TLD ERROR] Format error in query from {client_address}: {e}")
+        error_response = create_dns_error_response(data, rcode=1)  # Format Error
+        send_response(server_socket, error_response, client_address, protocol)
+        return
 
-    # Find the longest matching domain suffix in tld_data
-    matching_domain = None
-    for tld_domain in tld_data:
-        if domain_name.endswith(tld_domain):
-            if not matching_domain or len(tld_domain) > len(matching_domain):
-                matching_domain = tld_domain
+    print(f"[TLD][{protocol.upper()}] Received query for '{domain_name}' with type {qtype}")
+
+    # Check if the query type is supported
+    if qtype not in RECORD_TYPES:
+        print(f"[TLD] Query type {qtype} not implemented.")
+        error_response = create_dns_error_response(data, rcode=4)  # Not Implemented
+        send_response(server_socket, error_response, client_address, protocol)
+        return
+
+    # Find the closest matching domain
+    matching_domain = find_matching_domain(domain_name, tld_data)
 
     if matching_domain:
-        auth_ip, auth_port = tld_data[matching_domain]
-        print(f"[TLD] Forwarding query for '{domain_name}' to authoritative server {auth_ip}:{auth_port}")
-        forward_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        forward_socket.settimeout(5)
-        try:
-            forward_socket.sendto(data, (auth_ip, auth_port))
-            response, _ = forward_socket.recvfrom(1024)
-            if protocol == 'udp':
-                server_socket.sendto(response, client_address)
-            elif protocol == 'tcp':
-                return response
-        except Exception as e:
-            print(f"[TLD ERROR] {e}")
-            error_response = create_dns_error_response(data)
-            if protocol == 'udp':
-                server_socket.sendto(error_response, client_address)
-            elif protocol == 'tcp':
-                return error_response
-        finally:
-            forward_socket.close()
+        auth_ip_port = tld_data[matching_domain]
+        if isinstance(auth_ip_port, list) and len(auth_ip_port) == 2:
+            auth_ip, auth_port = auth_ip_port
+            # Forward query to the authoritative server
+            print(f"[TLD] Forwarding query for '{domain_name}' to authoritative server {auth_ip}:{auth_port}")
+            forward_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            forward_socket.settimeout(5)
+            try:
+                forward_socket.sendto(data, (auth_ip, auth_port))
+                response, _ = forward_socket.recvfrom(1024)
+                send_response(server_socket, response, client_address, protocol)
+            except socket.timeout:
+                print(f"[TLD ERROR] Timeout when contacting authoritative server {auth_ip}:{auth_port}")
+                error_response = create_dns_error_response(data, rcode=2)  # Server Failure
+                send_response(server_socket, error_response, client_address, protocol)
+            except Exception as e:
+                print(f"[TLD ERROR] {e}")
+                error_response = create_dns_error_response(data, rcode=2)  # Server Failure
+                send_response(server_socket, error_response, client_address, protocol)
+            finally:
+                forward_socket.close()
+        else:
+            print(f"[TLD ERROR] Invalid authoritative server info for domain '{matching_domain}'")
+            error_response = create_dns_error_response(data, rcode=2)  # Server Failure
+            send_response(server_socket, error_response, client_address, protocol)
     else:
         print(f"[TLD] Domain '{domain_name}' not found in TLD data.")
-        error_response = create_dns_error_response(data)
-        if protocol == 'udp':
-            server_socket.sendto(error_response, client_address)
-        elif protocol == 'tcp':
-            return error_response
+        error_response = create_dns_error_response(data, rcode=3)  # Name Error
+        send_response(server_socket, error_response, client_address, protocol)
 
-def extract_domain_name(data):
-    # Same domain name extraction logic as root server
-    query = data[12:]
-    domain_parts = []
+def send_response(server_socket, response, client_address, protocol):
+    if protocol == 'udp':
+        server_socket.sendto(response, client_address)
+    elif protocol == 'tcp':
+        # For TCP, the response should be returned to the caller
+        return response
+
+def extract_query_info(data):
+    try:
+        index = 12  # Skip the DNS header
+        labels = []
+        while True:
+            length = data[index]
+            if length == 0:
+                index += 1
+                break
+            if (length & 0xC0) == 0xC0:
+                # Handle name compression
+                pointer = ((length & 0x3F) << 8) | data[index + 1]
+                labels += parse_labels(data, pointer)[0]
+                index += 2
+                break
+            else:
+                index += 1
+                labels.append(data[index:index+length].decode())
+                index += length
+        qtype = int.from_bytes(data[index:index+2], 'big')
+        # qclass = int.from_bytes(data[index+2:index+4], 'big')
+        domain_name = '.'.join(labels)
+        return domain_name, qtype
+    except (IndexError, UnicodeDecodeError) as e:
+        raise Exception(f"Failed to parse query info: {e}")
+
+def parse_labels(data, index):
+    labels = []
     while True:
-        length = query[0]
+        length = data[index]
         if length == 0:
+            index += 1
             break
-        domain_parts.append(query[1:1 + length].decode())
-        query = query[1 + length:]
-    return '.'.join(domain_parts)
+        if (length & 0xC0) == 0xC0:
+            # Handle nested pointers (discouraged but possible)
+            pointer = ((length & 0x3F) << 8) | data[index + 1]
+            sub_labels, _ = parse_labels(data, pointer)
+            labels.extend(sub_labels)
+            index += 2
+            break
+        else:
+            index += 1
+            labels.append(data[index:index+length].decode())
+            index += length
+    return labels, index
 
-def create_dns_error_response(query):
+def find_matching_domain(domain_name, tld_data):
+    parts = domain_name.split('.')
+    for i in range(len(parts)):
+        sub_domain = '.'.join(parts[i:])
+        if sub_domain in tld_data:
+            return sub_domain
+    return None
+
+def create_dns_error_response(query, rcode):
     transaction_id = query[:2]
-    flags = b'\x81\x83'  # Standard query response, Name Error
-    rest = query[4:]
-    return transaction_id + flags + rest
+    # Extract flags from query
+    flags_query = query[2:4]
+    qr = 1 << 15  # Response flag
+    opcode = (flags_query[0] & 0x78) << 8  # Opcode from query
+    aa = 1 << 10  # Authoritative Answer
+    rd = (flags_query[1] & 0x01) << 8  # Recursion Desired
+    ra = 0  # Recursion Available (TLD server does not provide recursion)
+    z = 0  # Reserved
+    # Build flags
+    flags = qr | opcode | aa | rd | ra | rcode
+    flags_bytes = flags.to_bytes(2, byteorder='big')
+    qd_count = query[4:6]  # Copy QDCOUNT from query
+    an_count = b'\x00\x00'  # No answers
+    ns_count = b'\x00\x00'
+    ar_count = b'\x00\x00'
+    header = transaction_id + flags_bytes + qd_count + an_count + ns_count + ar_count
+    question = query[12:]  # Include the Question Section
+    return header + question
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
@@ -155,6 +245,6 @@ if __name__ == "__main__":
         sys.exit(1)
 
     tld_table_file = sys.argv[1]  # Path to the TLD table JSON file
-    tld = sys.argv[2]  # The TLD to use (e.g., 'com' or 'org')
+    tld = sys.argv[2]  # The TLD to use (e.g., 'com', 'org', 'arpa')
 
     start_tld_server(tld_table_file, tld)

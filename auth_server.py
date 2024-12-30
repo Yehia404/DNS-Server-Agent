@@ -1,15 +1,18 @@
+# auth_server.py
+
 import socket
 import json
 import sys
+import threading
 from config import HOST
 
 RECORD_TYPES = {
     1: 'A',
     2: 'NS',
     5: 'CNAME',
-    12: 'PTR',    # Add PTR record type
+    12: 'PTR',
     15: 'MX',
-    28: 'AAAA',   # Add AAAA record type
+    28: 'AAAA',
     # Add more types if needed
 }
 
@@ -20,8 +23,6 @@ def load_auth_table(auth_table_file):
     except Exception as e:
         print(f"[ERROR] Failed to load Auth table: {e}")
         sys.exit(1)
-
-import threading
 
 def start_auth_server(auth_table_file, domain):
     # Load the authoritative server table
@@ -37,7 +38,8 @@ def start_auth_server(auth_table_file, domain):
         "google": 1602,
         "microsoft": 1603,
         "wikipedia": 1604,
-        "arpa": 1606, 
+        "arpa": 1606,
+        # Add more domains and ports as needed
     }
 
     if domain not in port_map:
@@ -70,7 +72,7 @@ def start_auth_server(auth_table_file, domain):
 def handle_udp_queries(udp_socket, auth_table):
     while True:
         data, client_address = udp_socket.recvfrom(512)
-        handle_client(data, client_address, udp_socket, auth_table, protocol='udp')
+        threading.Thread(target=handle_client, args=(data, client_address, udp_socket, auth_table, 'udp')).start()
 
 def handle_tcp_queries(tcp_socket, auth_table):
     while True:
@@ -94,7 +96,7 @@ def handle_tcp_connection(client_socket, client_address, auth_table):
                 data += chunk
             if not data:
                 break
-            response = handle_client(data, client_address, None, auth_table, protocol='tcp')
+            response = handle_client(data, client_address, None, auth_table, 'tcp')
             if response:
                 # Send the two-byte length prefix
                 response_length = len(response).to_bytes(2, byteorder='big')
@@ -104,84 +106,132 @@ def handle_tcp_connection(client_socket, client_address, auth_table):
     finally:
         client_socket.close()
 
-
 def handle_client(data, client_address, server_socket, auth_table, protocol='udp'):
-    domain_name, qtype = extract_query_info(data)
-    print(f"[AUTH][{protocol.upper()}] Received query for '{domain_name}' with type {qtype}")
-    record_type = RECORD_TYPES.get(qtype, None)
-
-    if not record_type:
-        print(f"[AUTH] Unsupported query type: {qtype}")
-        error_response = create_dns_error_response(data)
-        if protocol == 'udp':
-            server_socket.sendto(error_response, client_address)
-        elif protocol == 'tcp':
-            return error_response
+    try:
+        domain_name, qtype = extract_query_info(data)
+    except Exception as e:
+        print(f"[AUTH ERROR] Format error in query from {client_address}: {e}")
+        error_response = create_dns_error_response(data, rcode=1)  # Format Error
+        send_response(server_socket, error_response, client_address, protocol)
         return
+
+    print(f"[AUTH][{protocol.upper()}] Received query for '{domain_name}' with type {qtype}")
+
+    # Check if the query type is supported
+    if qtype not in RECORD_TYPES:
+        print(f"[AUTH] Query type {qtype} not implemented.")
+        error_response = create_dns_error_response(data, rcode=4)  # Not Implemented
+        send_response(server_socket, error_response, client_address, protocol)
+        return
+
+    # Policy example: Refuse queries for certain domains or clients
+    # refused_domains = ['blocked.example.com']
+    # if domain_name in refused_domains:
+    #     print(f"[AUTH] Refusing query for '{domain_name}'")
+    #     error_response = create_dns_error_response(data, rcode=5)  # Refused
+    #     send_response(server_socket, error_response, client_address, protocol)
+    #     return
 
     if domain_name in auth_table:
         records = auth_table[domain_name]
-        answers = [r for r in records if r['type'] == record_type]
+        answers = [r for r in records if r['type'] == RECORD_TYPES[qtype]]
         if answers:
             response = create_dns_response(data, answers, qtype)
-            if protocol == 'udp':
-                server_socket.sendto(response, client_address)
-            elif protocol == 'tcp':
-                return response
+            send_response(server_socket, response, client_address, protocol)
         else:
-            print(f"[AUTH] No {record_type} record found for '{domain_name}'")
-            error_response = create_dns_error_response(data)
-            if protocol == 'udp':
-                server_socket.sendto(error_response, client_address)
-            elif protocol == 'tcp':
-                return error_response
+            print(f"[AUTH] No {RECORD_TYPES[qtype]} record found for '{domain_name}'")
+            error_response = create_dns_error_response(data, rcode=3)  # Name Error
+            send_response(server_socket, error_response, client_address, protocol)
     else:
         print(f"[AUTH] Domain '{domain_name}' not found.")
-        error_response = create_dns_error_response(data)
-        if protocol == 'udp':
-            server_socket.sendto(error_response, client_address)
-        elif protocol == 'tcp':
-            return error_response
+        error_response = create_dns_error_response(data, rcode=3)  # Name Error
+        send_response(server_socket, error_response, client_address, protocol)
+
+def send_response(server_socket, response, client_address, protocol):
+    if protocol == 'udp':
+        server_socket.sendto(response, client_address)
+    elif protocol == 'tcp':
+        # For TCP, the response should be returned to the caller
+        return response
 
 def extract_query_info(data):
-    query_section = data[12:]
-    index = 0
-    domain_parts = []
+    try:
+        index = 12  # Skip the DNS header
+        labels = []
+        while True:
+            length = data[index]
+            if length == 0:
+                index += 1
+                break
+            if (length & 0xC0) == 0xC0:
+                # Handle name compression
+                pointer = ((length & 0x3F) << 8) | data[index + 1]
+                labels += parse_labels(data, pointer)[0]
+                index += 2
+                break
+            else:
+                index += 1
+                labels.append(data[index:index+length].decode())
+                index += length
+        qtype = int.from_bytes(data[index:index+2], 'big')
+        # qclass = int.from_bytes(data[index+2:index+4], 'big')
+        domain_name = '.'.join(labels)
+        return domain_name, qtype
+    except (IndexError, UnicodeDecodeError) as e:
+        raise Exception(f"Failed to parse query info: {e}")
 
-    while True:
-        length = query_section[index]
-        if length == 0:
-            index += 1
-            break
-        domain_parts.append(query_section[index+1:index+1+length].decode())
-        index += length + 1
-
-    domain_name = '.'.join(domain_parts)
-
-    # Extract query type and class
-    qtype = int.from_bytes(query_section[index:index+2], 'big')
-    qclass = int.from_bytes(query_section[index+2:index+4], 'big')
-
-    return domain_name, qtype
+def parse_labels(data, index):
+    labels = []
+    try:
+        while True:
+            length = data[index]
+            if length == 0:
+                index += 1
+                break
+            if (length & 0xC0) == 0xC0:
+                pointer = ((length & 0x3F) << 8) | data[index + 1]
+                sub_labels, _ = parse_labels(data, pointer)
+                labels.extend(sub_labels)
+                index += 2
+                break
+            else:
+                index += 1
+                labels.append(data[index:index+length].decode())
+                index += length
+    except IndexError:
+        raise Exception("Incomplete or malformed label")
+    return labels, index
 
 def encode_domain_name(domain_name):
-    parts = domain_name.split('.')
+    labels = domain_name.rstrip('.').split('.')
     encoded = b''
-    for part in parts:
-        length = len(part)
-        encoded += bytes([length]) + part.encode()
-    encoded += b'\x00'  # Null byte to end the domain name
+    for label in labels:
+        length = len(label)
+        encoded += bytes([length]) + label.encode()
+    encoded += b'\x00'  # End with null byte
     return encoded
 
 def create_dns_response(query, records, qtype):
     transaction_id = query[:2]
-    flags = b'\x81\x80'  # Standard query response, No error
+    # Extract flags from query
+    flags_query = query[2:4]
+    qr = 1 << 15  # Response flag
+    opcode = (flags_query[0] & 0x78) << 8  # Opcode from query
+    aa = 1 << 10  # Authoritative Answer
+    rd = (flags_query[1] & 0x01) << 8  # Recursion Desired
+    ra = 0  # Recursion Available (Authoritative server does not provide recursion)
+    z = 0  # Reserved
+    rcode = 0  # No error
+    # Build flags
+    flags = qr | opcode | aa | rd | ra | rcode
+    flags_bytes = flags.to_bytes(2, byteorder='big')
+
     qd_count = b'\x00\x01'  # One question
     an_count = len(records).to_bytes(2, byteorder='big')  # Number of answers
     ns_count = b'\x00\x00'  # No authority records
     ar_count = b'\x00\x00'  # No additional records
 
-    header = transaction_id + flags + qd_count + an_count + ns_count + ar_count
+    header = transaction_id + flags_bytes + qd_count + an_count + ns_count + ar_count
     question = query[12:]  # Copy question
 
     answers = b''
@@ -189,11 +239,12 @@ def create_dns_response(query, records, qtype):
         answer = b'\xc0\x0c'  # Pointer to domain name in question
         answer += qtype.to_bytes(2, byteorder='big')
         answer += b'\x00\x01'  # Class IN
-        answer += b'\x00\x00\x00\x3c'  # TTL: 60 seconds
+        ttl = record.get('ttl', 300)
+        answer += ttl.to_bytes(4, byteorder='big')
 
         if record['type'] == 'A':
             rdata = socket.inet_aton(record['value'])
-            rdlength = b'\x00\x04'  # IPv4 address length
+            rdlength = len(rdata).to_bytes(2, byteorder='big')
         elif record['type'] == 'AAAA':
             rdata = socket.inet_pton(socket.AF_INET6, record['value'])
             rdlength = len(rdata).to_bytes(2, byteorder='big')
@@ -210,7 +261,7 @@ def create_dns_response(query, records, qtype):
             rdlength = len(cname).to_bytes(2, byteorder='big')
             rdata = cname
         elif record['type'] == 'MX':
-            preference = b'\x00\x05'  # MX preference value
+            preference = record.get('preference', 10).to_bytes(2, byteorder='big')
             exchange = encode_domain_name(record['value'])
             rdlength = (len(preference) + len(exchange)).to_bytes(2, byteorder='big')
             rdata = preference + exchange
@@ -222,12 +273,26 @@ def create_dns_response(query, records, qtype):
 
     return header + question + answers
 
-def create_dns_error_response(query):
+def create_dns_error_response(query, rcode):
     transaction_id = query[:2]
-    flags = b'\x81\x83'  # Standard query response, Name Error
-    rest = query[4:]
-    return transaction_id + flags + rest
-
+    # Extract flags from query
+    flags_query = query[2:4]
+    qr = 1 << 15  # Response flag
+    opcode = (flags_query[0] & 0x78) << 8  # Opcode from query
+    aa = 1 << 10  # Authoritative Answer
+    rd = (flags_query[1] & 0x01) << 8  # Recursion Desired
+    ra = 0  # Recursion Available (Authoritative server does not provide recursion)
+    z = 0  # Reserved
+    # Build flags
+    flags = qr | opcode | aa | rd | ra | rcode
+    flags_bytes = flags.to_bytes(2, byteorder='big')
+    qd_count = query[4:6]  # Copy QDCOUNT from query
+    an_count = b'\x00\x00'  # No answers
+    ns_count = b'\x00\x00'
+    ar_count = b'\x00\x00'
+    header = transaction_id + flags_bytes + qd_count + an_count + ns_count + ar_count
+    question = query[12:]  # Include the Question Section
+    return header + question
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
@@ -235,6 +300,6 @@ if __name__ == "__main__":
         sys.exit(1)
 
     auth_table_file = sys.argv[1]  # Path to the auth table JSON file
-    domain = sys.argv[2]  # The domain to handle (e.g., 'google', 'microsoft')
+    domain = sys.argv[2]  # The domain to handle (e.g., 'google', 'microsoft', 'wikipedia', 'arpa')
 
     start_auth_server(auth_table_file, domain)
