@@ -1,5 +1,3 @@
-# auth_server.py
-
 import socket
 import json
 import sys
@@ -13,7 +11,6 @@ RECORD_TYPES = {
     12: 'PTR',
     15: 'MX',
     28: 'AAAA',
-    # Add more types if needed
 }
 
 def load_auth_table(auth_table_file):
@@ -180,7 +177,6 @@ def extract_query_info(data):
                 labels.append(data[index:index+length].decode())
                 index += length
         qtype = int.from_bytes(data[index:index+2], 'big')
-        # qclass = int.from_bytes(data[index+2:index+4], 'big')
         domain_name = '.'.join(labels).lower()  # Convert to lowercase
         return domain_name, qtype
     except (IndexError, UnicodeDecodeError) as e:

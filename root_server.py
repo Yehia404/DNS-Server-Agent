@@ -1,5 +1,3 @@
-# root_server.py
-
 import socket
 import threading
 from config import HOST, ROOT_PORT
@@ -9,7 +7,6 @@ TLD_SERVERS = {
     "com": (HOST, 1500),
     "org": (HOST, 1600),
     "arpa": (HOST, 1700),
-    # Add more TLDs as needed
 }
 
 def start_root_server():
@@ -145,7 +142,6 @@ def extract_query_info(data):
                 labels.append(data[index:index+length].decode())
                 index += length
         qtype = int.from_bytes(data[index:index+2], 'big')
-        # qclass = int.from_bytes(data[index+2:index+4], 'big')
         domain_name = '.'.join(labels).lower()  # Convert to lowercase
         return domain_name, qtype
     except (IndexError, UnicodeDecodeError) as e:

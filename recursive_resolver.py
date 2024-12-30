@@ -1,12 +1,10 @@
-# recursive_resolver.py
-
 import socket
 import time
 import threading
 import random
 from config import HOST, ROOT_PORT
 
-RECURSOR_PORT = 53  # Port on which the recursive resolver will listen
+RECURSOR_PORT = 53
 
 def start_recursive_resolver():
     # UDP Socket
@@ -165,7 +163,6 @@ def extract_query_info(data):
                 raise ValueError("Invalid DNS query: Unexpected end of data while parsing domain name.")
     index += 1  # Skip the null byte
     qtype = int.from_bytes(data[index:index+2], 'big')
-    # qclass = int.from_bytes(data[index+2:index+4], 'big')  # Not used
     domain_name = '.'.join(domain_parts).lower()  # Convert to lowercase
     return domain_name, qtype
 
