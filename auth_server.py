@@ -84,8 +84,8 @@ def handle_tcp_connection(client_socket, client_address, auth_table):
         while True:
             # Read the two-byte length field
             length_data = client_socket.recv(2)
-            if not length_data:
-                break  # Client closed the connection
+            if not length_data or len(length_data) < 2:
+                break  # Client closed the connection or invalid length data
             message_length = int.from_bytes(length_data, byteorder='big')
             # Read the DNS query message
             data = b''
@@ -94,9 +94,11 @@ def handle_tcp_connection(client_socket, client_address, auth_table):
                 if not chunk:
                     break
                 data += chunk
-            if not data:
+            if len(data) < message_length:
+                print(f"[AUTH TCP ERROR] Incomplete DNS message from {client_address}")
                 break
-            response = handle_client(data, client_address, None, auth_table, 'tcp')
+            # Pass the 'protocol' as 'tcp' to get the response back
+            response = handle_client(data, client_address, client_socket, auth_table, 'tcp')
             if response:
                 # Send the two-byte length prefix
                 response_length = len(response).to_bytes(2, byteorder='big')
@@ -112,8 +114,11 @@ def handle_client(data, client_address, server_socket, auth_table, protocol='udp
     except Exception as e:
         print(f"[AUTH ERROR] Format error in query from {client_address}: {e}")
         error_response = create_dns_error_response(data, rcode=1)  # Format Error
-        send_response(server_socket, error_response, client_address, protocol)
-        return
+        if protocol == 'tcp':
+            return error_response
+        else:
+            send_response(server_socket, error_response, client_address, protocol)
+        return  # Exit the function after sending the error response
 
     domain_name = domain_name.lower()  # Ensure domain name is in lowercase
 
@@ -123,37 +128,51 @@ def handle_client(data, client_address, server_socket, auth_table, protocol='udp
     if qtype not in RECORD_TYPES:
         print(f"[AUTH] Query type {qtype} not implemented.")
         error_response = create_dns_error_response(data, rcode=4)  # Not Implemented
-        send_response(server_socket, error_response, client_address, protocol)
+        if protocol == 'tcp':
+            return error_response
+        else:
+            send_response(server_socket, error_response, client_address, protocol)
         return
 
-    # Policy example: Refuse queries for certain domains or clients
-    # refused_domains = ['blocked.example.com']
-    # if domain_name in refused_domains:
-    #     print(f"[AUTH] Refusing query for '{domain_name}'")
-    #     error_response = create_dns_error_response(data, rcode=5)  # Refused
-    #     send_response(server_socket, error_response, client_address, protocol)
-    #     return
+    # Policy: Implement any domain-specific policies here if needed
 
     if domain_name in auth_table:
         records = auth_table[domain_name]
         answers = [r for r in records if r['type'] == RECORD_TYPES[qtype]]
         if answers:
             response = create_dns_response(data, answers, qtype)
-            send_response(server_socket, response, client_address, protocol)
+            if protocol == 'tcp':
+                return response
+            else:
+                send_response(server_socket, response, client_address, protocol)
         else:
             print(f"[AUTH] No {RECORD_TYPES[qtype]} record found for '{domain_name}'")
             error_response = create_dns_error_response(data, rcode=3)  # Name Error
-            send_response(server_socket, error_response, client_address, protocol)
+            if protocol == 'tcp':
+                return error_response
+            else:
+                send_response(server_socket, error_response, client_address, protocol)
     else:
         print(f"[AUTH] Domain '{domain_name}' not found.")
         error_response = create_dns_error_response(data, rcode=3)  # Name Error
-        send_response(server_socket, error_response, client_address, protocol)
+        if protocol == 'tcp':
+            return error_response
+        else:
+            send_response(server_socket, error_response, client_address, protocol)
 
 def send_response(server_socket, response, client_address, protocol):
     if protocol == 'udp':
+        # Check if the response needs to be truncated
+        if len(response) > 512:
+            # Set the TC bit in the flags
+            flags = int.from_bytes(response[2:4], byteorder='big')
+            flags |= 0x0200  # Set the TC (Truncated) bit
+            response = response[:2] + flags.to_bytes(2, byteorder='big') + response[4:]
+            # Truncate the response to 512 bytes
+            response = response[:512]
         server_socket.sendto(response, client_address)
     elif protocol == 'tcp':
-        # For TCP, the response should be returned to the caller
+        # For TCP, return the response to be sent by the caller
         return response
 
 def extract_query_info(data):
@@ -304,4 +323,11 @@ if __name__ == "__main__":
     auth_table_file = sys.argv[1]  # Path to the auth table JSON file
     domain = sys.argv[2]  # The domain to handle (e.g., 'google', 'microsoft', 'wikipedia', 'arpa')
 
-    start_auth_server(auth_table_file, domain)
+    try:
+        start_auth_server(auth_table_file, domain)
+    except KeyboardInterrupt:
+        print("\n[AUTH] Server shutting down.")
+        sys.exit(0)
+    except Exception as e:
+        print(f"[AUTH ERROR] {e}")
+        sys.exit(1)

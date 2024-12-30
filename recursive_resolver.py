@@ -57,7 +57,8 @@ def handle_tcp_connection(client_socket, client_address, cache):
                 data += chunk
             if not data:
                 break
-            response = handle_query(data, client_address, None, cache, 'tcp')
+            # Pass the 'protocol' as 'tcp' to get the response back
+            response = handle_query(data, client_address, client_socket, cache, 'tcp')
             if response:
                 # Send the two-byte length prefix
                 response_length = len(response).to_bytes(2, byteorder='big')
@@ -99,6 +100,8 @@ def handle_query(data, client_address, socket, cache, protocol='udp'):
             # Update the transaction ID and flags to match the client's query
             response = update_transaction_id(cache_entry['response'], data[:2], data[2])
             send_response(socket, response, client_address, protocol)
+            if protocol == 'tcp':
+                return response
             return
         else:
             # Cache entry has expired
@@ -126,13 +129,24 @@ def handle_query(data, client_address, socket, cache, protocol='udp'):
         # Update the transaction ID to match the client's query
         response = update_transaction_id(response, data[:2], data[2])
         send_response(socket, response, client_address, protocol)
+        if protocol == 'tcp':
+            return response
     else:
         print(f"[ERROR] Could not resolve '{domain_name}' type {qtype}.")
         error_response = create_dns_error_response(data, rcode=2)  # Server Failure
         send_response(socket, error_response, client_address, protocol)
+        if protocol == 'tcp':
+            return error_response
 
 def send_response(socket, response, client_address, protocol):
     if protocol == 'udp':
+        if len(response) > 512:
+            # Set the TC bit
+            flags = int.from_bytes(response[2:4], byteorder='big')
+            flags |= 0x0200  # Set the TC (Truncated) bit
+            response = response[:2] + flags.to_bytes(2, byteorder='big') + response[4:]
+            # Truncate the response to 512 bytes
+            response = response[:512]
         socket.sendto(response, client_address)
     elif protocol == 'tcp':
         # For TCP, the response should be returned to the caller
