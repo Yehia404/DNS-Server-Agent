@@ -293,13 +293,28 @@ def update_transaction_id(response, transaction_id, query_flags_byte):
     # Replace the transaction ID in the response
     updated_response = transaction_id + response[2:]
 
-    # Copy RD flag from query and set RA flag
+    # Extract the flags from the response
+    flags = int.from_bytes(response[2:4], byteorder='big')
+
+    # Ensure the QR bit is set (since it's a response)
+    flags |= (1 << 15)
+
+    # Copy the RD bit from the query's flags
     rd = query_flags_byte & 0x01
-    flags = response[2]
-    flags &= 0xFE  # Clear RD bit
-    flags |= rd    # Set RD bit as per query
-    flags |= 0x80  # Set RA bit (Recursion Available)
-    updated_response = updated_response[:2] + bytes([flags]) + updated_response[3:]
+    if rd:
+        flags |= (1 << 8)  # Set RD bit
+    else:
+        flags &= ~(1 << 8)  # Clear RD bit
+
+    # Set the RA bit to indicate recursion is available
+    flags |= (1 << 7)  # Set RA bit
+
+    # Clear the AA bit since recursive resolver is not authoritative
+    flags &= ~(1 << 10)  # Clear AA bit
+
+    # Update flags in the response
+    flags_bytes = flags.to_bytes(2, byteorder='big')
+    updated_response = updated_response[:2] + flags_bytes + updated_response[4:]
 
     return updated_response
 
