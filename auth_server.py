@@ -141,6 +141,7 @@ def handle_client(data, client_address, server_socket, auth_table, protocol='udp
         answers = [r for r in records if r['type'] == RECORD_TYPES[qtype]]
         if answers:
             response = create_dns_response(data, answers, qtype)
+            print(f"[AUTH][{protocol.upper()}] Sending response to TLD server {client_address[0]}:{client_address[1]}")
             if protocol == 'tcp':
                 return response
             else:

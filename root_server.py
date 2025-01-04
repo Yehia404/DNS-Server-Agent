@@ -131,6 +131,7 @@ def forward_query(data, server_address, protocol):
             forward_socket.settimeout(5)
             forward_socket.sendto(data, server_address)
             response, _ = forward_socket.recvfrom(512)
+            print(f"[ROOT][{protocol.upper()}] Received query from TLD server {server_address[0]}:{server_address[1]}")
             return response
         except Exception as e:
             print(f"[ROOT ERROR] {e}")
@@ -158,6 +159,7 @@ def forward_query(data, server_address, protocol):
                 if len(response_data) != message_length:
                     print("[ROOT ERROR] Incomplete response data from TLD server over TCP")
                     return None
+                print(f"[ROOT][{protocol.upper()}] Received query from TLD server {server_address[0]}:{server_address[1]}")
                 return response_data
         except Exception as e:
             print(f"[ROOT ERROR] {e}")
